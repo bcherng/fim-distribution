@@ -2,7 +2,8 @@ const express = require('express');
 const path = require('path');
 const app = express();
 
-app.use('/downloads', express.static(path.join(__dirname, '../public/downloads/dist')));
+app.use('/downloads', express.static(path.join(__dirname, '..', 'public', 'downloads')));
+console.log('Serving downloads from:', path.join(__dirname, '..', 'public', 'downloads'));
 
 app.get('/', (req, res) => {
   res.send(`
