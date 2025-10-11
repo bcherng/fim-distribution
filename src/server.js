@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const app = express();
 
-const downloadsPath = path.join(__dirname, '..', 'public', 'downloads');
+const downloadsPath = path.join(__dirname, '..', 'public', 'downloads', 'src', 'Output');
 
 app.get('/downloads/FIM-Daemon-Setup.exe', (req, res) => {
   const file = path.join(downloadsPath, 'FIM-Daemon-Setup.exe');
