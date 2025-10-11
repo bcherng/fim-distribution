@@ -9,7 +9,7 @@ app.get('/', (req, res) => {
   res.send(`
     <h1>FIM Distribution</h1>
     <p><a href="/downloads/fim-daemon.deb">Linux Installer(.deb)</a></p>
-    <p><a href="/downloads/Fim-Daemon-Setup.exe">Windows Installer(.exe)</a></p>
+    <p><a href="/downloads/FIM-Daemon-Setup.exe">Windows Installer(.exe)</a></p>
   `);
 });
 
