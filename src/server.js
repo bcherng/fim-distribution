@@ -16,12 +16,6 @@ app.use('/downloads', express.static(downloadsPath, {
   }
 }));
 
-app.get('/downloads/*/', (req, res) => {
-  const originalUrl = req.originalUrl;
-  const cleanUrl = originalUrl.replace(/\/+$/, '');
-  res.redirect(301, cleanUrl);
-});
-
 app.get('/', (req, res) => {
   res.send(`
     <h1>FIM Distribution</h1>
