@@ -1,17 +1,26 @@
 const express = require('express');
 const path = require('path');
-const fs = require('fs');
 const app = express();
 
 const downloadsPath = path.join(__dirname, '..', 'public', 'downloads');
-const filePath = path.join(downloadsPath, 'FIM-Daemon-Setup.exe');
 
-console.log('Server directory:', __dirname);
-console.log('Downloads path:', downloadsPath);
-console.log('Full file path:', filePath);
-console.log('File exists:', fs.existsSync(filePath));
+app.use('/downloads', express.static(downloadsPath, {
+  index: false, // Disable directory indexing
+  dotfiles: 'deny', // Deny access to dotfiles
+  setHeaders: (res, path) => {
+    // Set proper MIME type for .exe files
+    if (path.endsWith('.exe')) {
+      res.set('Content-Type', 'application/vnd.microsoft.portable-executable');
+      res.set('Content-Disposition', 'attachment; filename="FIM-Daemon-Setup.exe"');
+    }
+  }
+}));
 
-app.use('/downloads', express.static(downloadsPath));
+app.get('/downloads/*/', (req, res) => {
+  const originalUrl = req.originalUrl;
+  const cleanUrl = originalUrl.replace(/\/+$/, '');
+  res.redirect(301, cleanUrl);
+});
 
 app.get('/', (req, res) => {
   res.send(`
