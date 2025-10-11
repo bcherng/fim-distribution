@@ -4,17 +4,15 @@ const app = express();
 
 const downloadsPath = path.join(__dirname, '..', 'public', 'downloads');
 
-app.use('/downloads', express.static(downloadsPath, {
-  index: false, // Disable directory indexing
-  dotfiles: 'deny', // Deny access to dotfiles
-  setHeaders: (res, path) => {
-    // Set proper MIME type for .exe files
-    if (path.endsWith('.exe')) {
-      res.set('Content-Type', 'application/vnd.microsoft.portable-executable');
-      res.set('Content-Disposition', 'attachment; filename="FIM-Daemon-Setup.exe"');
-    }
-  }
-}));
+app.get('/downloads/FIM-Daemon-Setup.exe', (req, res) => {
+  const file = path.join(downloadsPath, 'FIM-Daemon-Setup.exe');
+  res.download(file); // Express handles everything automatically
+});
+
+app.get('/downloads/fim-daemon.deb', (req, res) => {
+  const file = path.join(downloadsPath, 'fim-daemon.deb');
+  res.download(file);
+});
 
 app.get('/', (req, res) => {
   res.send(`
