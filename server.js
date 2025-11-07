@@ -48,12 +48,14 @@ app.get('/downloads/windows', async (req, res) => {
   const assets = await getLatestReleaseAssets();
   const winAsset = assets.find(a => a.name.toLowerCase().endsWith('.exe'));
   if (!winAsset) return res.status(404).send('Windows installer not found');
+  res.redirect(winAsset.browser_download_url);
 });
 
 app.get('/downloads/linux', async (req, res) => {
   const assets = await getLatestReleaseAssets();
   const debAsset = assets.find(a => a.name.toLowerCase().endsWith('.deb'));
   if (!debAsset) return res.status(404).send('Linux installer not found');
+  res.redirect(debAsset.browser_download_url);
 });
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
