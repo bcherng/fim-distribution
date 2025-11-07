@@ -9,7 +9,7 @@ const app = express();
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Landing page
+// Index page
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -24,14 +24,36 @@ app.get('/machine/:id', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'machine.html'));
 });
 
-// Latest release redirects (replace with your GitHub release redirect URLs)
-app.get('/downloads/windows', (req, res) => {
-  res.redirect('/path/to/latest/windows');
+
+// Function to fetch the latest release assets from GitHub
+async function getLatestReleaseAssets() {
+  const owner = 'bcherng';
+  const repo = 'fim-daemon';
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
+
+  try {
+    const res = await fetch(apiUrl, {
+      headers: { 'Accept': 'application/vnd.github+json' },
+    });
+    if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
+    const data = await res.json();
+    return data.assets; // Array of release assets
+  } catch (err) {
+    console.error('Error fetching GitHub release:', err);
+    return [];
+  }
+}
+
+app.get('/downloads/windows', async (req, res) => {
+  const assets = await getLatestReleaseAssets();
+  const winAsset = assets.find(a => a.name.toLowerCase().endsWith('.exe'));
+  if (!winAsset) return res.status(404).send('Windows installer not found');
 });
 
-app.get('/downloads/linux', (req, res) => {
-  res.redirect('/path/to/latest/linux');
-});
+app.get('/downloads/linux', async (req, res) => {
+  const assets = await getLatestReleaseAssets();
+  const debAsset = assets.find(a => a.name.toLowerCase().endsWith('.deb'));
+  if (!debAsset) return res.status(404).send('Linux installer not found');
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
