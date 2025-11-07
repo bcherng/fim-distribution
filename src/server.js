@@ -11,7 +11,7 @@ const app = express();
 
 // Function to fetch the latest release assets from GitHub
 async function getLatestReleaseAssets() {
-  const owner = 'YOUR_GITHUB_USERNAME';
+  const owner = 'bcherng';
   const repo = 'fim-daemon';
   const apiUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
 
@@ -30,14 +30,14 @@ async function getLatestReleaseAssets() {
 
 app.get('/downloads/windows', async (req, res) => {
   const assets = await getLatestReleaseAssets();
-  const winAsset = assets.find(a => a.name.endsWith('.exe'));
+  const winAsset = assets.find(a => a.name.toLowerCase().includes('fim') && a.name.endsWith('.exe'));
   if (!winAsset) return res.status(404).send('Windows installer not found');
   res.redirect(winAsset.browser_download_url); // Redirect to GitHub download URL
 });
 
 app.get('/downloads/linux', async (req, res) => {
   const assets = await getLatestReleaseAssets();
-  const debAsset = assets.find(a => a.name.endsWith('.deb'));
+  const debAsset = assets.find(a => a.name.toLowerCase().includes('fim') && a.name.endsWith('.deb'));
   if (!debAsset) return res.status(404).send('Linux installer not found');
   res.redirect(debAsset.browser_download_url);
 });
