@@ -9,8 +9,6 @@ const ASSET_WINDOWS_PATTERN = /\.exe$/i;
 const ASSET_LINUX_PATTERN = /\.deb$/i;
 const GITHUB_API = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
 
-app.use('/downloads/static', express.static(path.join(__dirname, '..', 'public', 'downloads', 'static')));
-
 app.get('/', async (req, res) => {
   try {
     const response = await fetch(GITHUB_API, {
