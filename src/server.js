@@ -1,65 +1,74 @@
-const express = require('express');
-const path = require('path');
-const fetch = require('node-fetch');  
+// server.js
+import express from 'express';
+import path from 'path';
+import fetch from 'node-fetch';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 
-const REPO_OWNER = 'bcherng';
-const REPO_NAME = 'fim-daemon';
-const ASSET_WINDOWS_PATTERN = /\.exe$/i;
-const ASSET_LINUX_PATTERN = /\.deb$/i;
-const GITHUB_API = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
+// Function to fetch the latest release assets from GitHub
+async function getLatestReleaseAssets() {
+  const owner = 'YOUR_GITHUB_USERNAME';
+  const repo = 'fim-daemon';
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
 
-app.get('/', async (req, res) => {
   try {
-    const response = await fetch(GITHUB_API, {
-      headers: { 'Accept': 'application/vnd.github+json' }
+    const res = await fetch(apiUrl, {
+      headers: { 'Accept': 'application/vnd.github+json' },
     });
-    if (!response.ok) {
-      throw new Error(`GitHub API responded ${response.status}`);
-    }
-    const release = await response.json();
+    if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
+    const data = await res.json();
+    return data.assets; // Array of release assets
+  } catch (err) {
+    console.error('Error fetching GitHub release:', err);
+    return [];
+  }
+}
 
-    const assets = release.assets || [];
-    const windowsAsset = assets.find(a => ASSET_WINDOWS_PATTERN.test(a.name));
-    const linuxAsset   = assets.find(a => ASSET_LINUX_PATTERN.test(a.name));
+app.get('/downloads/windows', async (req, res) => {
+  const assets = await getLatestReleaseAssets();
+  const winAsset = assets.find(a => a.name.endsWith('.exe'));
+  if (!winAsset) return res.status(404).send('Windows installer not found');
+  res.redirect(winAsset.browser_download_url); // Redirect to GitHub download URL
+});
 
-    const winUrl = windowsAsset ? windowsAsset.browser_download_url : '#';
-    const linuxUrl = linuxAsset ? linuxAsset.browser_download_url : '#';
-    const version = release.tag_name;
+app.get('/downloads/linux', async (req, res) => {
+  const assets = await getLatestReleaseAssets();
+  const debAsset = assets.find(a => a.name.endsWith('.deb'));
+  if (!debAsset) return res.status(404).send('Linux installer not found');
+  res.redirect(debAsset.browser_download_url);
+});
 
-    res.send(`
-      <!DOCTYPE html>
-      <html lang="en">
+app.get('/', (req, res) => {
+  res.send(`
+    <html>
       <head>
-        <meta charset="UTF-8">
         <title>FIM Distribution</title>
         <style>
-          body { font-family: Arial, sans-serif; background: #f4f4f4; color: #333; text-align: center; padding: 40px; }
-          .container { background: #fff; padding: 20px 40px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: inline-block; }
-          h1 { margin-bottom: 0.2em; }
-          p.version { color: #888; font-size: 0.9em; }
-          a.button { display: inline-block; margin: 10px 20px; padding: 12px 24px; background: #0070f3; color: white; text-decoration: none; border-radius: 4px; }
-          a.button:hover { background: #005bb5; }
-          .footer { margin-top: 40px; font-size: 0.8em; color: #aaa; }
+          body { font-family: sans-serif; max-width: 600px; margin: auto; padding: 2rem; }
+          h1 { color: #2c3e50; }
+          a.button {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            margin: 0.5rem 0;
+            background: #3498db;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+          }
+          a.button:hover { background: #2980b9; }
         </style>
       </head>
       <body>
-        <div class="container">
-          <h1>FIM Distribution</h1>
-          <p class="version">Latest version: <strong>${version}</strong></p>
-          <p><a class="button" href="${winUrl}">Download Windows Installer (.exe)</a></p>
-          <p><a class="button" href="${linuxUrl}">Download Linux Package (.deb)</a></p>
-        </div>
-        <div class="footer">
-          Built from <a href="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases">${REPO_OWNER}/${REPO_NAME} Releases</a>.
-        </div>
+        <h1>FIM Distribution</h1>
+        <p><a class="button" href="/downloads/linux">Linux Installer (.deb)</a></p>
+        <p><a class="button" href="/downloads/windows">Windows Installer (.exe)</a></p>
       </body>
-      </html>
-    `);
-  } catch (err) {
-    console.error('Error fetching release data:', err);
-    res.status(500).send('Error retrieving latest release information');
-  }
+    </html>
+  `);
 });
 
 const PORT = process.env.PORT || 3000;
