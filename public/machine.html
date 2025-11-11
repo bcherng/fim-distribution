@@ -2,32 +2,48 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Machine Details</title>
+  <title>Machine Details - FIM System</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <div class="container">
-    <h1>Machine Data</h1>
-    <p id="machineIdText">Machine ID: --</p>
+    <header>
+      <h1>Machine Event Logs</h1>
+      <div class="user-info">
+        <span id="userWelcome">Welcome, Admin</span>
+        <button id="logoutBtn" class="btn btn-logout">Logout</button>
+      </div>
+    </header>
 
-    <table>
-      <thead>
-        <tr>
-          <th>Timestamp</th>
-          <th>Hash</th>
-        </tr>
-      </thead>
-      <tbody id="machineData">
-        <tr>
-          <td>--</td>
-          <td>--</td>
-        </tr>
-      </tbody>
-    </table>
+    <main>
+      <div class="machine-header">
+        <h2 id="machineTitle">Machine: <span id="machineIdDisplay">Loading...</span></h2>
+        <div class="machine-status">
+          <span id="machineStatus"></span>
+          <span id="lastSeen"></span>
+        </div>
+      </div>
+
+      <div class="events-section">
+        <h3>Recent Events</h3>
+        <div class="controls">
+          <button id="refreshEventsBtn" class="btn btn-refresh">Refresh Events</button>
+          <select id="eventLimit">
+            <option value="50">Last 50 events</option>
+            <option value="100">Last 100 events</option>
+            <option value="200">Last 200 events</option>
+          </select>
+        </div>
+        
+        <div id="eventsList" class="events-list">
+          <div class="loading">Loading events...</div>
+        </div>
+      </div>
+    </main>
 
     <div class="navigation">
-      <button onclick="window.location.href='/dashboard'">Back to Dashboard</button>
-      <button onclick="window.location.href='/'">Back to Landing</button>
+      <button onclick="window.location.href='/dashboard'" class="btn btn-secondary">Back to Dashboard</button>
+      <button onclick="window.location.href='/'" class="btn btn-secondary">Back to Home</button>
     </div>
   </div>
 

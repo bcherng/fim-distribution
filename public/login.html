@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Admin Login - FIM System</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Admin Login</h1>
+      <p>Access the FIM monitoring dashboard</p>
+    </header>
+
+    <main class="login-container">
+      <form id="loginForm" class="login-form">
+        <div class="form-group">
+          <label for="username">Username:</label>
+          <input type="text" id="username" name="username" required>
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password:</label>
+          <input type="password" id="password" name="password" required>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Login</button>
+        
+        <div id="errorMessage" class="error-message" style="display: none;"></div>
+      </form>
+    </main>
+
+    <div class="navigation">
+      <button onclick="window.location.href='/'" class="btn btn-secondary">Back to Home</button>
+    </div>
+  </div>
+
+  <script src="js/auth.js"></script>
+</body>
+</html>

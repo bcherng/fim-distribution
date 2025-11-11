@@ -7,14 +7,43 @@
 </head>
 <body>
   <div class="container">
-    <h1>FIM Dashboard</h1>
-    
-    <label for="machineId">Enter Machine ID:</label>
-    <input type="text" id="machineId" placeholder="Machine ID">
-    <button id="goBtn">Go</button>
+    <header>
+      <h1>FIM Dashboard</h1>
+      <div class="user-info">
+        <span id="userWelcome">Welcome, Admin</span>
+        <button id="logoutBtn" class="btn btn-logout">Logout</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="machine-selection">
+        <h2>Select Machine to Monitor</h2>
+        <div class="form-group">
+          <label for="machineSelect">Choose Machine:</label>
+          <select id="machineSelect">
+            <option value="">Loading machines...</option>
+          </select>
+          <button id="refreshBtn" class="btn btn-refresh">Refresh</button>
+        </div>
+
+        <div class="form-group">
+          <label for="machineId">Or Enter Machine ID:</label>
+          <div class="input-group">
+            <input type="text" id="machineId" placeholder="Enter machine ID manually">
+            <button id="goBtn" class="btn btn-primary">View Machine</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="machineInfo" class="machine-info" style="display: none;">
+        <h3>Machine Information</h3>
+        <div id="infoContent"></div>
+        <button id="viewLogsBtn" class="btn btn-primary">View Event Logs</button>
+      </section>
+    </main>
 
     <div class="navigation">
-      <button onclick="window.location.href='/'">Back to Landing</button>
+      <button onclick="window.location.href='/'" class="btn btn-secondary">Back to Home</button>
     </div>
   </div>
 

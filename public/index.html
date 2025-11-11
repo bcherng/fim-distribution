@@ -2,21 +2,41 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>FIM Distribution</title>
+  <title>FIM System - File Integrity Monitoring</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <h1>FIM Distribution</h1>
+  <div class="container">
+    <header>
+      <h1>File Integrity Monitoring System</h1>
+      <p>Monitor and protect your files with enterprise-grade integrity checking</p>
+    </header>
 
-  <div class="downloads">
-    <a class="button" id="linuxDownload" href="#">Linux Installer (.deb)</a>
-    <a class="button" id="windowsDownload" href="#">Windows Installer (.exe)</a>
+    <main>
+      <section class="download-section">
+        <h2>Download Client</h2>
+        <div class="download-buttons">
+          <a href="/downloads/windows" class="btn btn-primary">
+            <span class="icon">🪟</span>
+            Download for Windows
+          </a>
+          <a href="/downloads/linux" class="btn btn-secondary">
+            <span class="icon">🐧</span>
+            Download for Linux
+          </a>
+        </div>
+      </section>
+
+      <section class="admin-section">
+        <h2>Administrator Access</h2>
+        <p>Access the monitoring dashboard to view client status and events</p>
+        <a href="/login" class="btn btn-admin">Admin Login</a>
+      </section>
+    </main>
+
+    <footer>
+      <p>&copy; 2025 FIM System. All rights reserved.</p>
+    </footer>
   </div>
-
-  <div class="login">
-    <button id="loginBtn">Login</button>
-  </div>
-
-  <script src="js/index.js"></script>
 </body>
 </html>
