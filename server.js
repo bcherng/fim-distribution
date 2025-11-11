@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,6 +13,9 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// JWT secret for daemons
+const DAEMON_JWT_SECRET = process.env.DAEMON_JWT_SECRET || 'daemon-secret-key-change-in-production';
 
 // Database connection
 let sql;
@@ -35,8 +39,10 @@ async function initDatabase() {
 // Initialize database on startup
 initDatabase();
 
-// Authentication middleware
-async function requireAuth(req, res, next) {
+// ===== ADMIN AUTHENTICATION (Session-based) =====
+
+// Authentication middleware for admins
+async function requireAdminAuth(req, res, next) {
   const sessionId = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
   
   if (!sessionId) {
@@ -66,7 +72,40 @@ async function requireAuth(req, res, next) {
   }
 }
 
-// Session management functions
+// ===== DAEMON AUTHENTICATION (JWT-based) =====
+
+// Authentication middleware for daemons
+async function requireDaemonAuth(req, res, next) {
+  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
+  
+  if (!token) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  
+  try {
+    const decoded = jwt.verify(token, DAEMON_JWT_SECRET);
+    
+    // Verify the client exists in database
+    const clientResult = await sql`
+      SELECT * FROM clients WHERE client_id = ${decoded.client_id}
+    `;
+    
+    if (clientResult.length === 0) {
+      return res.status(401).json({ error: 'Client not registered' });
+    }
+    
+    req.daemon = {
+      client_id: decoded.client_id,
+      hardware_id: decoded.hardware_id
+    };
+    next();
+  } catch (error) {
+    console.error('Daemon JWT verification error:', error);
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
+// Session management functions (for admins)
 async function createSession(userId, username) {
   const sessionId = crypto.randomBytes(32).toString('hex');
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
@@ -110,7 +149,9 @@ async function cleanupExpiredSessions() {
 // Clean up expired sessions every hour
 setInterval(cleanupExpiredSessions, 60 * 60 * 1000);
 
-// Routes
+// ===== ROUTES =====
+
+// Static pages
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -127,7 +168,8 @@ app.get('/machine/:id', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'machine.html'));
 });
 
-// API Routes
+// ===== ADMIN API ROUTES (Session-based) =====
+
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -164,7 +206,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.post('/api/auth/logout', requireAuth, async (req, res) => {
+app.post('/api/auth/logout', requireAdminAuth, async (req, res) => {
   try {
     const sessionId = req.headers.authorization.replace('Bearer ', '');
     await deleteSession(sessionId);
@@ -175,12 +217,158 @@ app.post('/api/auth/logout', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/auth/check', requireAuth, (req, res) => {
+app.get('/api/auth/check', requireAdminAuth, (req, res) => {
   res.json({ authenticated: true, user: req.user });
 });
 
-// Admin management routes (protected)
-app.post('/api/admin/create', requireAuth, async (req, res) => {
+// ===== DAEMON API ROUTES (JWT-based) =====
+
+// Daemon registration (public)
+app.post('/api/clients/register', async (req, res) => {
+  try {
+    const { client_id, hardware_info, baseline_id, platform } = req.body;
+    
+    if (!client_id) {
+      return res.status(400).json({ error: 'client_id is required' });
+    }
+    
+    // Upsert client data
+    await sql`
+      INSERT INTO clients (client_id, hardware_info, baseline_id, status, file_count)
+      VALUES (${client_id}, ${JSON.stringify(hardware_info)}, ${baseline_id || 1}, 'online', 0)
+      ON CONFLICT (client_id) 
+      DO UPDATE SET 
+        hardware_info = EXCLUDED.hardware_info,
+        baseline_id = EXCLUDED.baseline_id,
+        last_seen = CURRENT_TIMESTAMP,
+        status = 'online'
+    `;
+    
+    // Generate JWT for daemon
+    const payload = {
+      client_id: client_id,
+      hardware_id: hardware_info.machine_id || hardware_info.hostname,
+      type: 'daemon',
+      iat: Math.floor(Date.now() / 1000)
+    };
+    
+    const daemonToken = jwt.sign(payload, DAEMON_JWT_SECRET, {
+      expiresIn: '30d' // Long-lived for daemons
+    });
+    
+    console.log(`Daemon registered: ${client_id}`);
+    res.json({ 
+      status: 'success', 
+      message: 'Client registered successfully',
+      client_id,
+      token: daemonToken,
+      expires_in: 30 * 24 * 60 * 60 // 30 days in seconds
+    });
+  } catch (error) {
+    console.error('Error registering client:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Daemon heartbeat
+app.post('/api/clients/heartbeat', requireDaemonAuth, async (req, res) => {
+  try {
+    const { file_count, current_root_hash } = req.body;
+    const client_id = req.daemon.client_id;
+    
+    await sql`
+      UPDATE clients 
+      SET last_seen = CURRENT_TIMESTAMP, 
+          status = 'online',
+          file_count = ${file_count || 0},
+          current_root_hash = ${current_root_hash}
+      WHERE client_id = ${client_id}
+    `;
+    
+    res.json({ status: 'success', message: 'Heartbeat received' });
+  } catch (error) {
+    console.error('Error processing heartbeat:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Daemon event reporting
+app.post('/api/events/report', requireDaemonAuth, async (req, res) => {
+  try {
+    const { 
+      event_type, 
+      file_path, 
+      old_hash, 
+      new_hash, 
+      root_hash, 
+      merkle_proof 
+    } = req.body;
+    
+    const client_id = req.daemon.client_id;
+    
+    if (!event_type) {
+      return res.status(400).json({ error: 'event_type is required' });
+    }
+    
+    // Insert event
+    const result = await sql`
+      INSERT INTO events (client_id, event_type, file_path, old_hash, new_hash, root_hash, merkle_proof)
+      VALUES (${client_id}, ${event_type}, ${file_path}, ${old_hash}, ${new_hash}, ${root_hash}, ${JSON.stringify(merkle_proof)})
+      RETURNING id
+    `;
+    
+    // Update client's current root hash if provided
+    if (root_hash) {
+      await sql`
+        UPDATE clients 
+        SET current_root_hash = ${root_hash},
+            last_seen = CURRENT_TIMESTAMP
+        WHERE client_id = ${client_id}
+      `;
+    }
+    
+    console.log(`Event recorded for ${client_id}: ${event_type} - ${file_path}`);
+    res.json({ 
+      status: 'success', 
+      message: 'Event recorded',
+      event_id: result[0].id
+    });
+  } catch (error) {
+    console.error('Error reporting event:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Save baseline
+app.post('/api/baselines/save', requireDaemonAuth, async (req, res) => {
+  try {
+    const { root_hash, file_count } = req.body;
+    const client_id = req.daemon.client_id;
+    
+    if (!root_hash) {
+      return res.status(400).json({ error: 'root_hash is required' });
+    }
+    
+    const result = await sql`
+      INSERT INTO baselines (client_id, root_hash, file_count)
+      VALUES (${client_id}, ${root_hash}, ${file_count || 0})
+      RETURNING id
+    `;
+    
+    res.json({ 
+      status: 'success', 
+      message: 'Baseline saved',
+      baseline_id: result[0].id
+    });
+  } catch (error) {
+    console.error('Error saving baseline:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===== ADMIN MANAGEMENT ROUTES (protected) =====
+
+app.post('/api/admin/create', requireAdminAuth, async (req, res) => {
   try {
     const { username, password } = req.body;
     
@@ -212,7 +400,7 @@ app.post('/api/admin/create', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/admin/list', requireAuth, async (req, res) => {
+app.get('/api/admin/list', requireAdminAuth, async (req, res) => {
   try {
     const result = await sql`
       SELECT id, username, created_at 
@@ -227,8 +415,9 @@ app.get('/api/admin/list', requireAuth, async (req, res) => {
   }
 });
 
-// Client API routes (protected)
-app.get('/api/clients', requireAuth, async (req, res) => {
+// ===== CLIENT MANAGEMENT ROUTES (Admin protected) =====
+
+app.get('/api/clients', requireAdminAuth, async (req, res) => {
   try {
     const result = await sql`
       SELECT 
@@ -248,7 +437,7 @@ app.get('/api/clients', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/clients/:client_id', requireAuth, async (req, res) => {
+app.get('/api/clients/:client_id', requireAdminAuth, async (req, res) => {
   try {
     const { client_id } = req.params;
     
@@ -267,7 +456,7 @@ app.get('/api/clients/:client_id', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/clients/:client_id/events', requireAuth, async (req, res) => {
+app.get('/api/clients/:client_id/events', requireAdminAuth, async (req, res) => {
   try {
     const { client_id } = req.params;
     const { limit = 50 } = req.query;
@@ -286,7 +475,8 @@ app.get('/api/clients/:client_id/events', requireAuth, async (req, res) => {
   }
 });
 
-// Download routes (public)
+// ===== DOWNLOAD ROUTES (public) =====
+
 async function getLatestReleaseAssets() {
   const owner = 'bcherng';
   const repo = 'fim-daemon';
