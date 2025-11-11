@@ -2,8 +2,6 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { neon } from '@neondatabase/serverless';
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -12,8 +10,24 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Initialize database connection
-const sql = neon(process.env.DATABASE_URL);
+// Initialize database connection - use dynamic import for Neon
+let sql;
+async function initDatabase() {
+  try {
+    const { neon } = await import('@neondatabase/serverless');
+    sql = neon(process.env.DATABASE_URL);
+    console.log('Neon database connection initialized');
+  } catch (error) {
+    console.error('Failed to initialize Neon database:', error);
+    // Fallback to a mock implementation for development
+    sql = {
+      async query(query, params) {
+        console.log('Mock query:', query, params);
+        return [];
+      }
+    };
+  }
+}
 
 // Initialize database tables
 async function initDB() {
@@ -58,14 +72,16 @@ async function initDB() {
       )
     `;
 
-    console.log('Neon database tables initialized successfully');
+    console.log('Database tables initialized successfully');
   } catch (error) {
-    console.error('Error initializing Neon database:', error);
+    console.error('Error initializing database tables:', error);
   }
 }
 
 // Initialize database on startup
-initDB();
+initDatabase().then(() => {
+  initDB();
+});
 
 // Health check endpoint
 app.get('/api/health', async (req, res) => {
@@ -343,4 +359,4 @@ app.get('/downloads/linux', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT} with Neon Postgres`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
