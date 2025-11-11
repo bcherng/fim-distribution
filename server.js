@@ -22,7 +22,7 @@ async function initDatabase() {
     console.log('Neon database connection initialized');
   } catch (error) {
     console.error('Failed to initialize Neon database:', error);
-    // Fallback mock for development
+    // Fallback to a mock implementation for development
     sql = {
       async query(query, params) {
         console.log('Mock query:', query, params);
