@@ -19,8 +19,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const cancelRemovalBtn = document.getElementById('cancelRemovalBtn');
     const confirmRemovalBtn = document.getElementById('confirmRemovalBtn');
 
-    let clientToDelete = null;
+    // Real-time update state
     let dirtyClients = new Set();
+    let clientToDelete = null;
     let ws = null;
 
     // Check authentication
@@ -37,15 +38,6 @@ document.addEventListener('DOMContentLoaded', function () {
     // Event listeners
     logoutBtn.addEventListener('click', handleLogout);
     reviewBtn.addEventListener('click', handleReview);
-
-    // Initialize WebSocket
-    connectWebSocket();
-
-    // Start batching interval
-    setInterval(processBatchedUpdates, 5000);
-
-    // Load machines on page load
-    loadMachines();
 
     // Modal closing logic
     const closeModal = () => {
@@ -68,6 +60,11 @@ document.addEventListener('DOMContentLoaded', function () {
     closeRemovalModalBtn.addEventListener('click', closeRemovalModal);
     cancelRemovalBtn.addEventListener('click', closeRemovalModal);
     confirmRemovalBtn.addEventListener('click', handleConfirmRemoval);
+
+    // Initialize systems
+    connectWebSocket();
+    setInterval(processBatchedUpdates, 5000);
+    loadMachines();
 
     async function loadMachines() {
         try {
@@ -101,6 +98,7 @@ document.addEventListener('DOMContentLoaded', function () {
         ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
+                console.log('WS Update received:', data);
                 if (data.clientId) {
                     dirtyClients.add(data.clientId);
                 } else if (data.type === 'client_registered' || data.type === 'client_removed') {
@@ -111,20 +109,20 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         };
 
+        ws.onopen = () => console.log('WebSocket connected');
         ws.onclose = () => {
             console.log('WS connection closed. Reconnecting...');
             setTimeout(connectWebSocket, 3000);
         };
-
-        ws.onerror = (err) => {
-            console.error('WS error:', err);
-        };
+        ws.onerror = (err) => console.error('WS error:', err);
     }
 
     async function processBatchedUpdates() {
         if (dirtyClients.size === 0) return;
 
-        const needsFullRefresh = dirtyClients.has('__all__');
+        console.log('Processing batched updates for:', Array.from(dirtyClients));
+        const currentDirty = new Set(dirtyClients);
+        const needsFullRefresh = currentDirty.has('__all__');
         dirtyClients.clear();
 
         try {
@@ -137,7 +135,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (needsFullRefresh) {
                     renderMachineTable(data.clients || []);
                 } else {
-                    updateSpecificRows(data.clients || []);
+                    updateSpecificRows(data.clients || [], currentDirty);
                 }
             }
         } catch (error) {
@@ -145,51 +143,37 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    function updateSpecificRows(machines) {
+    function updateSpecificRows(machines, dirtySet) {
         machines.forEach(m => {
+            if (!dirtySet.has(m.client_id)) return;
+
             const row = document.querySelector(`tr[data-client-id="${m.client_id}"]`);
             if (row) {
+                console.log('Updating row for machine:', m.client_id);
                 const newRowHtml = generateRowHtml(m);
                 const tempTable = document.createElement('table');
                 tempTable.innerHTML = newRowHtml;
                 const newRowBody = tempTable.querySelector('tr');
                 row.innerHTML = newRowBody.innerHTML;
             } else {
+                // New machine appeared? Add it.
                 renderMachineTable(machines);
             }
         });
     }
 
     function generateRowHtml(m) {
-        // Reachability Logic
-        let reachStatus = 'Healthy';
-        let reachColor = 'green';
-        if (m.status === 'offline') {
-            reachStatus = 'Down';
-            reachColor = 'red';
-        } else if (m.missed_heartbeat_count > 0) {
-            reachStatus = 'Incidents';
-            reachColor = 'yellow';
-        }
+        // Status calculations moved here to avoid duplication
+        let reachStatus = 'Healthy', reachColor = 'green';
+        if (m.status === 'offline') { reachStatus = 'Down'; reachColor = 'red'; }
+        else if (m.missed_heartbeat_count > 0) { reachStatus = 'Incidents'; reachColor = 'yellow'; }
 
-        // Attestation Logic
-        let attestStatus = 'Valid';
-        let attestColor = 'green';
-        if (m.attestation_error_count > 0 || m.attestation_valid === false) {
-            attestStatus = 'Failed';
-            attestColor = 'red';
-        }
+        let attestStatus = 'Valid', attestColor = 'green';
+        if (m.attestation_error_count > 0 || m.attestation_valid === false) { attestStatus = 'Failed'; attestColor = 'red'; }
 
-        // Integrity Logic
-        let integStatus = 'Clean';
-        let integColor = 'green';
-        if (m.integrity_change_count > 1) {
-            integStatus = `High Activity (${m.integrity_change_count})`;
-            integColor = 'red';
-        } else if (m.integrity_change_count === 1) {
-            integStatus = 'Modified (1)';
-            integColor = 'yellow';
-        }
+        let integStatus = 'Clean', integColor = 'green';
+        if (m.integrity_change_count > 1) { integStatus = `High Activity (${m.integrity_change_count})`; integColor = 'red'; }
+        else if (m.integrity_change_count === 1) { integStatus = 'Modified (1)'; integColor = 'yellow'; }
 
         return `
             <tr data-client-id="${escapeHtml(m.client_id)}">
@@ -226,11 +210,10 @@ document.addEventListener('DOMContentLoaded', function () {
             machineTableBody.innerHTML = '<tr><td colspan="6" class="loading">No machines found.</td></tr>';
             return;
         }
-
         machineTableBody.innerHTML = machines.map(m => generateRowHtml(m)).join('');
     }
 
-    // Expose functions to window
+    // Window-exposed functions
     window.initiateRemoval = function (clientId) {
         clientToDelete = clientId;
         removalMachineId.textContent = clientId;
@@ -261,7 +244,6 @@ document.addEventListener('DOMContentLoaded', function () {
             });
 
             const data = await response.json();
-
             if (response.ok) {
                 alert('Machine removed successfully.');
                 closeRemovalModal();
@@ -281,32 +263,25 @@ document.addEventListener('DOMContentLoaded', function () {
             headers: { 'Authorization': `Bearer ${token}` }
         })
             .then(response => {
-                if (response.status === 401) {
-                    handleAuthError();
-                    throw new Error('Authentication failed');
-                }
+                if (response.status === 401) { handleAuthError(); throw new Error('Auth failed'); }
                 if (!response.ok) throw new Error('Failed to fetch details');
                 return response.json();
             })
             .then(data => {
                 const client = data.client;
-                if (!client) throw new Error('Client data missing');
-
                 detailMachineId.textContent = client.client_id;
                 infoContent.innerHTML = `
                 <div class="info-grid">
-                    <div class="info-item"><strong>Reachability Status</strong> ${client.status} (${client.missed_heartbeat_count} misses)</div>
-                    <div class="info-item"><strong>Attestation Status</strong> ${client.attestation_error_count > 0 ? 'FAIL' : 'OK'}</div>
-                    <div class="info-item"><strong>Integrity Count</strong> ${client.integrity_change_count} changes</div>
-                    <div class="info-item"><strong>File Count</strong> ${client.file_count || 0}</div>
-                    <div class="info-item"><strong>Current Root Hash</strong> <code class="hash-code">${client.current_root_hash || 'N/A'}</code></div>
+                    <div class="info-item"><strong>Reachability</strong> ${client.status} (${client.missed_heartbeat_count} misses)</div>
+                    <div class="info-item"><strong>Attestation</strong> ${client.attestation_error_count > 0 ? 'FAIL' : 'OK'}</div>
+                    <div class="info-item"><strong>Integrity</strong> ${client.integrity_change_count} changes</div>
+                    <div class="info-item"><strong>Files</strong> ${client.file_count || 0}</div>
+                    <div class="info-item"><strong>Root Hash</strong> <code class="hash-code">${client.current_root_hash || 'N/A'}</code></div>
                     <div class="info-item"><strong>Last Review</strong> ${formatDate(client.last_reviewed_at)}</div>
                 </div>
             `;
                 machineInfo.style.display = 'block';
                 modalBackdrop.style.display = 'block';
-                machineInfo.scrollIntoView({ behavior: 'smooth' });
-
                 viewLogsBtn.onclick = () => window.location.href = `/machine/${encodeURIComponent(client.client_id)}`;
                 reviewBtn.setAttribute('data-client-id', client.client_id);
             })
@@ -325,10 +300,9 @@ document.addEventListener('DOMContentLoaded', function () {
             });
 
             if (response.ok) {
-                alert('Review completed. Indicators reset.');
+                alert('Review completed.');
                 loadMachines();
-                machineInfo.style.display = 'none';
-                modalBackdrop.style.display = 'none';
+                closeModal();
             } else {
                 throw new Error('Failed to submit review');
             }
@@ -341,10 +315,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     async function handleLogout() {
         try {
-            await fetch('/api/auth/logout', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            await fetch('/api/auth/logout', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
         } finally {
             localStorage.removeItem('fim_token');
             localStorage.removeItem('fim_user');
@@ -360,17 +331,13 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function formatDate(dateString) {
         if (!dateString) return 'Never';
-        const date = new Date(dateString);
-        return date.toLocaleString();
+        return new Date(dateString).toLocaleString();
     }
 
     function escapeHtml(unsafe) {
         if (!unsafe) return '';
         return unsafe.toString()
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#039;");
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
     }
 });
