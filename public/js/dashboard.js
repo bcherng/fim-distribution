@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const reviewBtn = document.getElementById('reviewBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     const userWelcome = document.getElementById('userWelcome');
+    const wsStatus = document.getElementById('wsStatus');
     const modalBackdrop = document.getElementById('modalBackdrop');
     const closeModalBtn = document.getElementById('closeModalBtn');
 
@@ -69,7 +70,6 @@ document.addEventListener('DOMContentLoaded', function () {
     async function loadMachines() {
         try {
             machineTableBody.innerHTML = '<tr><td colspan="6" class="loading">Loading machines...</td></tr>';
-
             const response = await fetch('/api/clients', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -92,45 +92,53 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Real-time Update Logic
     function connectWebSocket() {
-        // Handle potentially missing protocol
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = window.location.host || 'localhost:3000';
-        console.log(`Attempting to connect to WebSocket at ${protocol}//${host}`);
+        console.log(`[WS] Connecting to ${protocol}//${host}`);
+
+        wsStatus.textContent = 'WS Connecting...';
+        wsStatus.className = 'ws-badge status-yellow';
 
         ws = new WebSocket(`${protocol}//${host}`);
 
         ws.onopen = () => {
-            console.log('WebSocket connection established');
+            console.log('[WS] Connected');
+            wsStatus.textContent = 'WS Connected';
+            wsStatus.className = 'ws-badge status-green';
         };
 
         ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
-                console.log('WS Update received:', data);
+                console.log('[WS] Message received:', data);
                 if (data.clientId) {
                     dirtyClients.add(data.clientId);
-                } else if (data.type === 'client_registered' || data.type === 'client_removed') {
+                } else if (data.type === 'client_registered' || data.type === 'client_removed' || data.type === 'clients_timed_out') {
                     dirtyClients.add('__all__');
                 }
             } catch (e) {
-                console.error('Error parsing WS message:', e);
+                console.error('[WS] Parse error:', e);
             }
         };
 
         ws.onclose = () => {
-            console.log('WS connection closed. Reconnecting in 3s...');
+            console.log('[WS] Disconnected. Retrying in 3s...');
+            wsStatus.textContent = 'WS Disconnected';
+            wsStatus.className = 'ws-badge status-red';
             setTimeout(connectWebSocket, 3000);
         };
 
         ws.onerror = (err) => {
-            console.error('WS error:', err);
+            console.error('[WS] Error:', err);
+            wsStatus.textContent = 'WS Error';
+            wsStatus.className = 'ws-badge status-red';
         };
     }
 
     async function processBatchedUpdates() {
         if (dirtyClients.size === 0) return;
 
-        console.log('Processing batched updates for:', Array.from(dirtyClients));
+        console.log('[WS] Processing batched updates for:', Array.from(dirtyClients));
         const currentDirty = new Set(dirtyClients);
         const needsFullRefresh = currentDirty.has('__all__');
         dirtyClients.clear();
@@ -159,21 +167,21 @@ document.addEventListener('DOMContentLoaded', function () {
 
             const row = document.querySelector(`tr[data-client-id="${m.client_id}"]`);
             if (row) {
-                console.log('Updating row for machine:', m.client_id);
+                console.log('[WS] Updating row for machine:', m.client_id);
                 const newRowHtml = generateRowHtml(m);
                 const tempTable = document.createElement('table');
                 tempTable.innerHTML = newRowHtml;
                 const newRowBody = tempTable.querySelector('tr');
-                row.innerHTML = newRowBody.innerHTML;
+                if (newRowBody) {
+                    row.innerHTML = newRowBody.innerHTML;
+                }
             } else {
-                // New machine appeared? Add it.
                 renderMachineTable(machines);
             }
         });
     }
 
     function generateRowHtml(m) {
-        // Status calculations moved here to avoid duplication
         let reachStatus = 'Healthy', reachColor = 'green';
         if (m.status === 'offline') { reachStatus = 'Down'; reachColor = 'red'; }
         else if (m.missed_heartbeat_count > 0) { reachStatus = 'Incidents'; reachColor = 'yellow'; }
@@ -223,7 +231,6 @@ document.addEventListener('DOMContentLoaded', function () {
         machineTableBody.innerHTML = machines.map(m => generateRowHtml(m)).join('');
     }
 
-    // Window-exposed functions
     window.initiateRemoval = function (clientId) {
         clientToDelete = clientId;
         removalMachineId.textContent = clientId;

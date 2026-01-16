@@ -32,6 +32,7 @@ let wss;
 function broadcastUpdate(clientId, type = 'client_updated') {
   if (!wss) return;
   const message = JSON.stringify({ type, clientId, timestamp: new Date().toISOString() });
+  console.log(`[WS] Broadcasting to ${wss.clients.size} clients:`, message);
   wss.clients.forEach(client => {
     if (client.readyState === 1) { // WebSocket.OPEN
       client.send(message);
