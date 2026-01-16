@@ -596,6 +596,32 @@ header p {
   border: 1px solid #e1e4e8;
 }
 
+.btn-remove {
+  background: none;
+  border: none;
+  color: #e74c3c;
+  font-size: 1.2rem;
+  font-weight: bold;
+  cursor: pointer;
+  padding: 0 10px;
+  transition: transform 0.2s, color 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-remove:hover {
+  transform: scale(1.2);
+  color: #c0392b;
+}
+
+.warning-text {
+  color: #e74c3c;
+  font-size: 0.9rem;
+  margin-top: 10px;
+  font-weight: 500;
+}
+
 @media (max-width: 768px) {
   .container {
     padding: 10px;

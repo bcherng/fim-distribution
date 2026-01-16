@@ -61,6 +61,29 @@
           <button id="reviewBtn" class="btn btn-success">Mark as Reviewed</button>
         </div>
       </section>
+
+      <section id="removalModal" class="modal-content" style="display: none;">
+        <div class="modal-header">
+          <h3>Confirm Machine Removal</h3>
+          <button id="closeRemovalModalBtn" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p>Are you sure you want to remove <strong id="removalMachineId"></strong>?</p>
+          <p class="warning-text">This will delete all events and baseline data for this machine.</p>
+          <div class="form-group" style="margin-top: 20px;">
+            <label for="adminUsername">Admin Username</label>
+            <input type="text" id="adminUsername" placeholder="Enter admin username">
+          </div>
+          <div class="form-group">
+            <label for="adminPassword">Admin Password</label>
+            <input type="password" id="adminPassword" placeholder="Enter admin password">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="cancelRemovalBtn" class="btn btn-secondary">Cancel</button>
+          <button id="confirmRemovalBtn" class="btn btn-admin">Confirm Removal</button>
+        </div>
+      </section>
     </main>
 
     <div class="navigation">

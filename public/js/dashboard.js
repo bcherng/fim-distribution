@@ -11,6 +11,17 @@ document.addEventListener('DOMContentLoaded', function () {
     const modalBackdrop = document.getElementById('modalBackdrop');
     const closeModalBtn = document.getElementById('closeModalBtn');
 
+    // Removal elements
+    const removalModal = document.getElementById('removalModal');
+    const removalMachineId = document.getElementById('removalMachineId');
+    const adminUsernameInput = document.getElementById('adminUsername');
+    const adminPasswordInput = document.getElementById('adminPassword');
+    const closeRemovalModalBtn = document.getElementById('closeRemovalModalBtn');
+    const cancelRemovalBtn = document.getElementById('cancelRemovalBtn');
+    const confirmRemovalBtn = document.getElementById('confirmRemovalBtn');
+
+    let clientToDelete = null;
+
     // Check authentication
     const token = localStorage.getItem('fim_token');
     const user = JSON.parse(localStorage.getItem('fim_user') || '{}');
@@ -35,6 +46,19 @@ document.addEventListener('DOMContentLoaded', function () {
 
     closeModalBtn.addEventListener('click', closeModal);
     modalBackdrop.addEventListener('click', closeModal);
+
+    // Removal Logic
+    const closeRemovalModal = () => {
+        removalModal.style.display = 'none';
+        modalBackdrop.style.display = 'none';
+        clientToDelete = null;
+        adminUsernameInput.value = '';
+        adminPasswordInput.value = '';
+    };
+
+    closeRemovalModalBtn.addEventListener('click', closeRemovalModal);
+    cancelRemovalBtn.addEventListener('click', closeRemovalModal);
+    confirmRemovalBtn.addEventListener('click', handleConfirmRemoval);
 
     // Load machines on page load
     loadMachines();
@@ -127,13 +151,59 @@ document.addEventListener('DOMContentLoaded', function () {
                     <td class="col-seen">${formatDate(m.last_seen)}</td>
                     <td class="col-actions">
                         <button onclick="window.showMachineDetails('${m.client_id}')" class="btn btn-secondary">Details</button>
+                        <button onclick="window.initiateRemoval('${m.client_id}')" class="btn-remove" title="Remove machine">&times;</button>
                     </td>
                 </tr>
             `;
         }).join('');
     }
 
-    // Expose showMachineDetails to window for the onclick handler
+    // Expose functions to window
+    window.initiateRemoval = function (clientId) {
+        clientToDelete = clientId;
+        removalMachineId.textContent = clientId;
+        removalModal.style.display = 'block';
+        modalBackdrop.style.display = 'block';
+    };
+
+    async function handleConfirmRemoval() {
+        if (!clientToDelete) return;
+
+        const username = adminUsernameInput.get ? adminUsernameInput.get() : adminUsernameInput.value;
+        const password = adminPasswordInput.get ? adminPasswordInput.get() : adminPasswordInput.value;
+
+        if (!username || !password) {
+            alert('Admin credentials are required for removal.');
+            return;
+        }
+
+        try {
+            confirmRemovalBtn.disabled = true;
+            const response = await fetch(`/api/clients/${encodeURIComponent(clientToDelete)}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                alert('Machine removed successfully.');
+                closeRemovalModal();
+                loadMachines();
+            } else {
+                throw new Error(data.error || 'Failed to remove machine');
+            }
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            confirmRemovalBtn.disabled = false;
+        }
+    }
+
     window.showMachineDetails = function (clientId) {
         fetch(`/api/clients/${encodeURIComponent(clientId)}`, {
             headers: { 'Authorization': `Bearer ${token}` }

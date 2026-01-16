@@ -841,11 +841,23 @@ app.post('/api/clients/:client_id/review-events', requireAdminAuth, async (req, 
 app.delete('/api/clients/:client_id', requireAdminAuth, async (req, res) => {
   try {
     const { client_id } = req.params;
-    const { confirmation } = req.body;
+    const { username, password } = req.body;
 
-    if (confirmation !== `delete ${client_id}`) {
-      return res.status(400).json({ error: 'Invalid confirmation' });
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Admin username and password required' });
     }
+
+    // Verify admin password
+    const adminResult = await sql`
+      SELECT * FROM admins WHERE username = ${username}
+    `;
+
+    const admin = adminResult[0];
+    if (!admin || !(await bcrypt.compare(password, admin.password_hash))) {
+      return res.status(401).json({ error: 'Invalid admin credentials' });
+    }
+
+    console.log(`Deleting client: ${client_id} (authorized by ${username})`);
 
     // Delete events first
     await sql`DELETE FROM events WHERE client_id = ${client_id}`;
@@ -858,7 +870,7 @@ app.delete('/api/clients/:client_id', requireAdminAuth, async (req, res) => {
 
     res.json({
       status: 'success',
-      message: 'Client removed'
+      message: 'Client and all associated data removed successfully'
     });
   } catch (error) {
     console.error('Error deleting client:', error);
