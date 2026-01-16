@@ -8,6 +8,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const reviewBtn = document.getElementById('reviewBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     const userWelcome = document.getElementById('userWelcome');
+    const modalBackdrop = document.getElementById('modalBackdrop');
+    const closeModalBtn = document.getElementById('closeModalBtn');
 
     // Check authentication
     const token = localStorage.getItem('fim_token');
@@ -24,6 +26,15 @@ document.addEventListener('DOMContentLoaded', function () {
     refreshBtn.addEventListener('click', loadMachines);
     logoutBtn.addEventListener('click', handleLogout);
     reviewBtn.addEventListener('click', handleReview);
+
+    // Modal closing logic
+    const closeModal = () => {
+        machineInfo.style.display = 'none';
+        modalBackdrop.style.display = 'none';
+    };
+
+    closeModalBtn.addEventListener('click', closeModal);
+    modalBackdrop.addEventListener('click', closeModal);
 
     // Load machines on page load
     loadMachines();
@@ -151,6 +162,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 </div>
             `;
                 machineInfo.style.display = 'block';
+                modalBackdrop.style.display = 'block';
                 machineInfo.scrollIntoView({ behavior: 'smooth' });
 
                 viewLogsBtn.onclick = () => window.location.href = `/machine/${encodeURIComponent(client.client_id)}`;
@@ -174,6 +186,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 alert('Review completed. Indicators reset.');
                 loadMachines();
                 machineInfo.style.display = 'none';
+                modalBackdrop.style.display = 'none';
             } else {
                 throw new Error('Failed to submit review');
             }
