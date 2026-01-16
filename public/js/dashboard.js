@@ -55,79 +55,106 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    function renderMachineTable(clients) {
-        if (clients.length === 0) {
-            machineTableBody.innerHTML = '<tr><td colspan="6" class="empty">No machines registered</td></tr>';
+    function renderMachineTable(machines) {
+        if (!machines || machines.length === 0) {
+            machineTableBody.innerHTML = '<tr><td colspan="6" class="loading">No machines found.</td></tr>';
             return;
         }
 
-        machineTableBody.innerHTML = '';
-        clients.forEach(client => {
-            const tr = document.createElement('tr');
-            tr.className = 'machine-row';
-            tr.onclick = () => showMachineDetails(client);
-
+        machineTableBody.innerHTML = machines.map(m => {
             // Reachability Logic
-            let reachStatus = 'green';
-            let reachText = 'Healthy';
-            if (client.status === 'offline') {
-                reachStatus = 'red';
-                reachText = 'Down';
-            } else if (client.missed_heartbeat_count > 0) {
-                reachStatus = 'yellow';
-                reachText = `Incidents (${client.missed_heartbeat_count})`;
+            let reachStatus = 'Healthy';
+            let reachColor = 'green';
+            if (m.status === 'offline') {
+                reachStatus = 'Down';
+                reachColor = 'red';
+            } else if (m.missed_heartbeat_count > 0) {
+                reachStatus = 'Incidents';
+                reachColor = 'yellow';
             }
 
             // Attestation Logic
-            let attStatus = client.attestation_error_count > 0 ? 'red' : 'green';
-            let attText = client.attestation_error_count > 0 ? `Failed (${client.attestation_error_count})` : 'Valid';
-
-            // Integrity Logic
-            let intStatus = 'green';
-            let intText = 'Clean';
-            if (client.integrity_change_count > 1) {
-                intStatus = 'red';
-                intText = `High Activity (${client.integrity_change_count})`;
-            } else if (client.integrity_change_count === 1) {
-                intStatus = 'yellow';
-                intText = 'Modified (1)';
+            let attestStatus = 'Valid';
+            let attestColor = 'green';
+            if (m.attestation_error_count > 0 || m.attestation_valid === false) {
+                attestStatus = 'Failed';
+                attestColor = 'red';
             }
 
-            tr.innerHTML = `
-                <td><strong>${escapeHtml(client.client_id)}</strong></td>
-                <td><span class="status-indicator status-${reachStatus}">${reachText}</span></td>
-                <td><span class="status-indicator status-${attStatus}">${attText}</span></td>
-                <td><span class="status-indicator status-${intStatus}">${intText}</span></td>
-                <td>${formatDate(client.last_seen)}</td>
-                <td><button class="btn btn-small btn-secondary">Details</button></td>
+            // Integrity Logic
+            let integStatus = 'Clean';
+            let integColor = 'green';
+            if (m.integrity_change_count > 1) {
+                integStatus = `High Activity (${m.integrity_change_count})`;
+                integColor = 'red';
+            } else if (m.integrity_change_count === 1) {
+                integStatus = 'Modified (1)';
+                integColor = 'yellow';
+            }
+
+            return `
+                <tr>
+                    <td class="col-name"><div class="machine-name-cell" title="${escapeHtml(m.client_id)}">${escapeHtml(m.client_id)}</div></td>
+                    <td class="col-status">
+                        <div class="status-wrapper" title="Reachability: ${reachStatus}">
+                            <div class="status-circle status-${reachColor}"></div>
+                            <span class="status-label">${reachStatus}</span>
+                        </div>
+                    </td>
+                    <td class="col-status">
+                        <div class="status-wrapper" title="Attestation: ${attestStatus}">
+                            <div class="status-circle status-${attestColor}"></div>
+                            <span class="status-label">${attestStatus}</span>
+                        </div>
+                    </td>
+                    <td class="col-status">
+                        <div class="status-wrapper" title="Integrity: ${integStatus}">
+                            <div class="status-circle status-${integColor}"></div>
+                            <span class="status-label">${integStatus}</span>
+                        </div>
+                    </td>
+                    <td class="col-seen">${formatDate(m.last_seen)}</td>
+                    <td class="col-actions">
+                        <button onclick="window.showMachineDetails('${m.client_id}')" class="btn btn-secondary">Details</button>
+                    </td>
+                </tr>
             `;
-            machineTableBody.appendChild(tr);
-        });
+        }).join('');
     }
 
-    function showMachineDetails(client) {
-        detailMachineId.textContent = client.client_id;
-        infoContent.innerHTML = `
-            <div class="info-grid">
-                <div class="info-item"><strong>Reachability Status</strong> ${client.status} (${client.missed_heartbeat_count} misses)</div>
-                <div class="info-item"><strong>Attestation Status</strong> ${client.attestation_error_count > 0 ? 'FAIL' : 'OK'}</div>
-                <div class="info-item"><strong>Integrity Count</strong> ${client.integrity_change_count} changes</div>
-                <div class="info-item"><strong>File Count</strong> ${client.file_count || 0}</div>
-                <div class="info-item"><strong>Current Root Hash</strong> <code class="hash-code">${client.current_root_hash || 'N/A'}</code></div>
-                <div class="info-item"><strong>Last Review</strong> ${formatDate(client.last_reviewed_at)}</div>
-            </div>
-        `;
+    // Expose showMachineDetails to window for the onclick handler
+    window.showMachineDetails = function (clientId) {
+        fetch(`/api/clients/${encodeURIComponent(clientId)}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        })
+            .then(response => {
+                if (response.status === 401) {
+                    handleAuthError();
+                    throw new Error('Authentication failed');
+                }
+                if (!response.ok) throw new Error('Failed to fetch details');
+                return response.json();
+            })
+            .then(client => {
+                detailMachineId.textContent = client.client_id;
+                infoContent.innerHTML = `
+                <div class="info-grid">
+                    <div class="info-item"><strong>Reachability Status</strong> ${client.status} (${client.missed_heartbeat_count} misses)</div>
+                    <div class="info-item"><strong>Attestation Status</strong> ${client.attestation_error_count > 0 ? 'FAIL' : 'OK'}</div>
+                    <div class="info-item"><strong>Integrity Count</strong> ${client.integrity_change_count} changes</div>
+                    <div class="info-item"><strong>File Count</strong> ${client.file_count || 0}</div>
+                    <div class="info-item"><strong>Current Root Hash</strong> <code class="hash-code">${client.current_root_hash || 'N/A'}</code></div>
+                    <div class="info-item"><strong>Last Review</strong> ${formatDate(client.last_reviewed_at)}</div>
+                </div>
+            `;
+                machineInfo.style.display = 'block';
+                machineInfo.scrollIntoView({ behavior: 'smooth' });
 
-        machineInfo.style.display = 'block';
-        machineInfo.scrollIntoView({ behavior: 'smooth' });
-
-        viewLogsBtn.onclick = () => {
-            window.location.href = `/machine/${encodeURIComponent(client.client_id)}`;
-        };
-
-        // Update review button for this specific client
-        reviewBtn.setAttribute('data-client-id', client.client_id);
-    }
+                viewLogsBtn.onclick = () => window.location.href = `/machine/${encodeURIComponent(client.client_id)}`;
+                reviewBtn.setAttribute('data-client-id', client.client_id);
+            })
+            .catch(err => alert(err.message));
+    };
 
     async function handleReview() {
         const clientId = reviewBtn.getAttribute('data-client-id');
@@ -142,7 +169,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
             if (response.ok) {
                 alert('Review completed. Indicators reset.');
-                loadMachines(); // Refresh list
+                loadMachines();
                 machineInfo.style.display = 'none';
             } else {
                 throw new Error('Failed to submit review');
