@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import { WebSocketServer } from 'ws';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,6 +26,18 @@ const mockData = {
   sessions: new Map(),
   baselines: []
 };
+
+let wss;
+
+function broadcastUpdate(clientId, type = 'client_updated') {
+  if (!wss) return;
+  const message = JSON.stringify({ type, clientId, timestamp: new Date().toISOString() });
+  wss.clients.forEach(client => {
+    if (client.readyState === 1) { // WebSocket.OPEN
+      client.send(message);
+    }
+  });
+}
 
 // Initialize admin mock data
 bcrypt.hash('password123', 10).then(hash => {
@@ -389,6 +402,8 @@ app.post('/api/clients/register', async (req, res) => {
         status = 'online'
     `;
 
+    broadcastUpdate(client_id, 'client_registered');
+
     const payload = {
       client_id: client_id,
       hardware_id: hardware_info.machine_id || hardware_info.hostname,
@@ -472,6 +487,8 @@ app.post('/api/clients/heartbeat', requireDaemonAuth, async (req, res) => {
         accepted: true
       }
     });
+
+    broadcastUpdate(client_id, 'client_heartbeat');
   } catch (error) {
     console.error('Error processing heartbeat:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -575,6 +592,8 @@ app.post('/api/events/report', requireDaemonAuth, async (req, res) => {
       event_id: event_id,
       validation: validation
     });
+
+    broadcastUpdate(client_id, 'event_reported');
   } catch (error) {
     console.error('Error reporting event:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -635,6 +654,8 @@ app.post('/api/events/acknowledge', requireDaemonAuth, async (req, res) => {
       message: 'Acknowledgement received',
       hash_updated: true
     });
+
+    broadcastUpdate(client_id, 'event_acknowledged');
   } catch (error) {
     console.error('Error processing acknowledgement:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -776,6 +797,7 @@ app.post('/api/clients/:client_id/review', requireAdminAuth, async (req, res) =>
     `;
 
     res.json({ status: 'success', message: 'Client indicators reset' });
+    broadcastUpdate(client_id, 'client_reviewed');
   } catch (error) {
     console.error('Error reviewing client:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -872,6 +894,8 @@ app.delete('/api/clients/:client_id', requireAdminAuth, async (req, res) => {
       status: 'success',
       message: 'Client and all associated data removed successfully'
     });
+
+    broadcastUpdate(client_id, 'client_removed');
   } catch (error) {
     console.error('Error deleting client:', error);
     res.status(500).json({ error: 'Internal server error' });

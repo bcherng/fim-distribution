@@ -1,6 +1,5 @@
 document.addEventListener('DOMContentLoaded', function () {
     const machineTableBody = document.getElementById('machineTableBody');
-    const refreshBtn = document.getElementById('refreshBtn');
     const machineInfo = document.getElementById('machineInfo');
     const detailMachineId = document.getElementById('detailMachineId');
     const infoContent = document.getElementById('infoContent');
@@ -21,6 +20,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const confirmRemovalBtn = document.getElementById('confirmRemovalBtn');
 
     let clientToDelete = null;
+    let dirtyClients = new Set();
+    let ws = null;
 
     // Check authentication
     const token = localStorage.getItem('fim_token');
@@ -34,9 +35,17 @@ document.addEventListener('DOMContentLoaded', function () {
     userWelcome.textContent = `Welcome, ${user.username}`;
 
     // Event listeners
-    refreshBtn.addEventListener('click', loadMachines);
     logoutBtn.addEventListener('click', handleLogout);
     reviewBtn.addEventListener('click', handleReview);
+
+    // Initialize WebSocket
+    connectWebSocket();
+
+    // Start batching interval
+    setInterval(processBatchedUpdates, 5000);
+
+    // Load machines on page load
+    loadMachines();
 
     // Modal closing logic
     const closeModal = () => {
@@ -60,13 +69,9 @@ document.addEventListener('DOMContentLoaded', function () {
     cancelRemovalBtn.addEventListener('click', closeRemovalModal);
     confirmRemovalBtn.addEventListener('click', handleConfirmRemoval);
 
-    // Load machines on page load
-    loadMachines();
-
     async function loadMachines() {
         try {
             machineTableBody.innerHTML = '<tr><td colspan="6" class="loading">Loading machines...</td></tr>';
-            refreshBtn.disabled = true;
 
             const response = await fetch('/api/clients', {
                 headers: { 'Authorization': `Bearer ${token}` }
@@ -85,9 +90,135 @@ document.addEventListener('DOMContentLoaded', function () {
         } catch (error) {
             console.error('Error loading machines:', error);
             machineTableBody.innerHTML = `<tr><td colspan="6" class="error">Error: ${error.message}</td></tr>`;
-        } finally {
-            refreshBtn.disabled = false;
         }
+    }
+
+    // Real-time Update Logic
+    function connectWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${protocol}//${window.location.host}`);
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.clientId) {
+                    dirtyClients.add(data.clientId);
+                } else if (data.type === 'client_registered' || data.type === 'client_removed') {
+                    dirtyClients.add('__all__');
+                }
+            } catch (e) {
+                console.error('Error parsing WS message:', e);
+            }
+        };
+
+        ws.onclose = () => {
+            console.log('WS connection closed. Reconnecting...');
+            setTimeout(connectWebSocket, 3000);
+        };
+
+        ws.onerror = (err) => {
+            console.error('WS error:', err);
+        };
+    }
+
+    async function processBatchedUpdates() {
+        if (dirtyClients.size === 0) return;
+
+        const needsFullRefresh = dirtyClients.has('__all__');
+        dirtyClients.clear();
+
+        try {
+            const response = await fetch('/api/clients', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (needsFullRefresh) {
+                    renderMachineTable(data.clients || []);
+                } else {
+                    updateSpecificRows(data.clients || []);
+                }
+            }
+        } catch (error) {
+            console.error('Error processing batched updates:', error);
+        }
+    }
+
+    function updateSpecificRows(machines) {
+        machines.forEach(m => {
+            const row = document.querySelector(`tr[data-client-id="${m.client_id}"]`);
+            if (row) {
+                const newRowHtml = generateRowHtml(m);
+                const tempTable = document.createElement('table');
+                tempTable.innerHTML = newRowHtml;
+                const newRowBody = tempTable.querySelector('tr');
+                row.innerHTML = newRowBody.innerHTML;
+            } else {
+                renderMachineTable(machines);
+            }
+        });
+    }
+
+    function generateRowHtml(m) {
+        // Reachability Logic
+        let reachStatus = 'Healthy';
+        let reachColor = 'green';
+        if (m.status === 'offline') {
+            reachStatus = 'Down';
+            reachColor = 'red';
+        } else if (m.missed_heartbeat_count > 0) {
+            reachStatus = 'Incidents';
+            reachColor = 'yellow';
+        }
+
+        // Attestation Logic
+        let attestStatus = 'Valid';
+        let attestColor = 'green';
+        if (m.attestation_error_count > 0 || m.attestation_valid === false) {
+            attestStatus = 'Failed';
+            attestColor = 'red';
+        }
+
+        // Integrity Logic
+        let integStatus = 'Clean';
+        let integColor = 'green';
+        if (m.integrity_change_count > 1) {
+            integStatus = `High Activity (${m.integrity_change_count})`;
+            integColor = 'red';
+        } else if (m.integrity_change_count === 1) {
+            integStatus = 'Modified (1)';
+            integColor = 'yellow';
+        }
+
+        return `
+            <tr data-client-id="${escapeHtml(m.client_id)}">
+                <td class="col-name"><div class="machine-name-cell" title="${escapeHtml(m.client_id)}">${escapeHtml(m.client_id)}</div></td>
+                <td class="col-status">
+                    <div class="status-wrapper" title="Reachability: ${reachStatus}">
+                        <div class="status-circle status-${reachColor}"></div>
+                        <span class="status-label">${reachStatus}</span>
+                    </div>
+                </td>
+                <td class="col-status">
+                    <div class="status-wrapper" title="Attestation: ${attestStatus}">
+                        <div class="status-circle status-${attestColor}"></div>
+                        <span class="status-label">${attestStatus}</span>
+                    </div>
+                </td>
+                <td class="col-status">
+                    <div class="status-wrapper" title="Integrity: ${integStatus}">
+                        <div class="status-circle status-${integColor}"></div>
+                        <span class="status-label">${integStatus}</span>
+                    </div>
+                </td>
+                <td class="col-seen">${formatDate(m.last_seen)}</td>
+                <td class="col-actions">
+                    <button onclick="window.showMachineDetails('${m.client_id}')" class="btn btn-secondary">Details</button>
+                    <button onclick="window.initiateRemoval('${m.client_id}')" class="btn-remove" title="Remove machine">&times;</button>
+                </td>
+            </tr>
+        `;
     }
 
     function renderMachineTable(machines) {
@@ -96,66 +227,7 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        machineTableBody.innerHTML = machines.map(m => {
-            // Reachability Logic
-            let reachStatus = 'Healthy';
-            let reachColor = 'green';
-            if (m.status === 'offline') {
-                reachStatus = 'Down';
-                reachColor = 'red';
-            } else if (m.missed_heartbeat_count > 0) {
-                reachStatus = 'Incidents';
-                reachColor = 'yellow';
-            }
-
-            // Attestation Logic
-            let attestStatus = 'Valid';
-            let attestColor = 'green';
-            if (m.attestation_error_count > 0 || m.attestation_valid === false) {
-                attestStatus = 'Failed';
-                attestColor = 'red';
-            }
-
-            // Integrity Logic
-            let integStatus = 'Clean';
-            let integColor = 'green';
-            if (m.integrity_change_count > 1) {
-                integStatus = `High Activity (${m.integrity_change_count})`;
-                integColor = 'red';
-            } else if (m.integrity_change_count === 1) {
-                integStatus = 'Modified (1)';
-                integColor = 'yellow';
-            }
-
-            return `
-                <tr>
-                    <td class="col-name"><div class="machine-name-cell" title="${escapeHtml(m.client_id)}">${escapeHtml(m.client_id)}</div></td>
-                    <td class="col-status">
-                        <div class="status-wrapper" title="Reachability: ${reachStatus}">
-                            <div class="status-circle status-${reachColor}"></div>
-                            <span class="status-label">${reachStatus}</span>
-                        </div>
-                    </td>
-                    <td class="col-status">
-                        <div class="status-wrapper" title="Attestation: ${attestStatus}">
-                            <div class="status-circle status-${attestColor}"></div>
-                            <span class="status-label">${attestStatus}</span>
-                        </div>
-                    </td>
-                    <td class="col-status">
-                        <div class="status-wrapper" title="Integrity: ${integStatus}">
-                            <div class="status-circle status-${integColor}"></div>
-                            <span class="status-label">${integStatus}</span>
-                        </div>
-                    </td>
-                    <td class="col-seen">${formatDate(m.last_seen)}</td>
-                    <td class="col-actions">
-                        <button onclick="window.showMachineDetails('${m.client_id}')" class="btn btn-secondary">Details</button>
-                        <button onclick="window.initiateRemoval('${m.client_id}')" class="btn-remove" title="Remove machine">&times;</button>
-                    </td>
-                </tr>
-            `;
-        }).join('');
+        machineTableBody.innerHTML = machines.map(m => generateRowHtml(m)).join('');
     }
 
     // Expose functions to window
@@ -169,8 +241,8 @@ document.addEventListener('DOMContentLoaded', function () {
     async function handleConfirmRemoval() {
         if (!clientToDelete) return;
 
-        const username = adminUsernameInput.get ? adminUsernameInput.get() : adminUsernameInput.value;
-        const password = adminPasswordInput.get ? adminPasswordInput.get() : adminPasswordInput.value;
+        const username = adminUsernameInput.value;
+        const password = adminPasswordInput.value;
 
         if (!username || !password) {
             alert('Admin credentials are required for removal.');
