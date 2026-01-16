@@ -135,7 +135,10 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (!response.ok) throw new Error('Failed to fetch details');
                 return response.json();
             })
-            .then(client => {
+            .then(data => {
+                const client = data.client;
+                if (!client) throw new Error('Client data missing');
+
                 detailMachineId.textContent = client.client_id;
                 infoContent.innerHTML = `
                 <div class="info-grid">
