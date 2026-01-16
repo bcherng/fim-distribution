@@ -1,18 +1,18 @@
-document.addEventListener('DOMContentLoaded', function() {
-    const machineSelect = document.getElementById('machineSelect');
-    const machineIdInput = document.getElementById('machineId');
-    const goBtn = document.getElementById('goBtn');
+document.addEventListener('DOMContentLoaded', function () {
+    const machineTableBody = document.getElementById('machineTableBody');
     const refreshBtn = document.getElementById('refreshBtn');
     const machineInfo = document.getElementById('machineInfo');
+    const detailMachineId = document.getElementById('detailMachineId');
     const infoContent = document.getElementById('infoContent');
     const viewLogsBtn = document.getElementById('viewLogsBtn');
+    const reviewBtn = document.getElementById('reviewBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     const userWelcome = document.getElementById('userWelcome');
 
     // Check authentication
     const token = localStorage.getItem('fim_token');
     const user = JSON.parse(localStorage.getItem('fim_user') || '{}');
-    
+
     if (!token) {
         window.location.href = '/login';
         return;
@@ -22,152 +22,135 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Event listeners
     refreshBtn.addEventListener('click', loadMachines);
-    goBtn.addEventListener('click', handleGoClick);
-    machineSelect.addEventListener('change', handleMachineSelect);
-    viewLogsBtn.addEventListener('click', handleViewLogs);
     logoutBtn.addEventListener('click', handleLogout);
+    reviewBtn.addEventListener('click', handleReview);
 
     // Load machines on page load
     loadMachines();
 
     async function loadMachines() {
         try {
-            machineSelect.innerHTML = '<option value="">Loading machines...</option>';
-            machineSelect.disabled = true;
+            machineTableBody.innerHTML = '<tr><td colspan="6" class="loading">Loading machines...</td></tr>';
             refreshBtn.disabled = true;
 
             const response = await fetch('/api/clients', {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
+                headers: { 'Authorization': `Bearer ${token}` }
             });
-            
+
             if (response.status === 401) {
                 handleAuthError();
                 return;
             }
-            
-            if (!response.ok) {
-                throw new Error(`Server returned ${response.status}`);
-            }
-            
+
+            if (!response.ok) throw new Error(`Server returned ${response.status}`);
+
             const data = await response.json();
-            
-            if (data.clients && data.clients.length > 0) {
-                machineSelect.innerHTML = '<option value="">Select a machine...</option>';
-                
-                data.clients.forEach(client => {
-                    const option = document.createElement('option');
-                    option.value = client.client_id;
-                    option.textContent = `${client.client_id} (${client.status}) - ${formatDate(client.last_seen)}`;
-                    machineSelect.appendChild(option);
-                });
-                
-                machineSelect.disabled = false;
-            } else {
-                machineSelect.innerHTML = '<option value="">No machines found</option>';
-            }
+            renderMachineTable(data.clients || []);
+
         } catch (error) {
             console.error('Error loading machines:', error);
-            machineSelect.innerHTML = '<option value="">Error loading machines</option>';
+            machineTableBody.innerHTML = `<tr><td colspan="6" class="error">Error: ${error.message}</td></tr>`;
         } finally {
             refreshBtn.disabled = false;
         }
     }
 
-    function handleGoClick() {
-        const machineId = machineIdInput.value.trim();
-        if (machineId) {
-            loadMachineInfo(machineId);
-        } else {
-            alert('Please enter a Machine ID');
+    function renderMachineTable(clients) {
+        if (clients.length === 0) {
+            machineTableBody.innerHTML = '<tr><td colspan="6" class="empty">No machines registered</td></tr>';
+            return;
         }
-    }
 
-    function handleMachineSelect() {
-        const selectedMachine = machineSelect.value;
-        if (selectedMachine) {
-            machineIdInput.value = selectedMachine;
-            loadMachineInfo(selectedMachine);
-        }
-    }
+        machineTableBody.innerHTML = '';
+        clients.forEach(client => {
+            const tr = document.createElement('tr');
+            tr.className = 'machine-row';
+            tr.onclick = () => showMachineDetails(client);
 
-    async function loadMachineInfo(machineId) {
-        try {
-            machineInfo.style.display = 'none';
-            goBtn.disabled = true;
-            
-            const response = await fetch(`/api/clients/${encodeURIComponent(machineId)}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-            
-            if (response.status === 401) {
-                handleAuthError();
-                return;
+            // Reachability Logic
+            let reachStatus = 'green';
+            let reachText = 'Healthy';
+            if (client.status === 'offline') {
+                reachStatus = 'red';
+                reachText = 'Down';
+            } else if (client.missed_heartbeat_count > 0) {
+                reachStatus = 'yellow';
+                reachText = `Incidents (${client.missed_heartbeat_count})`;
             }
-            
-            if (!response.ok) {
-                if (response.status === 404) {
-                    throw new Error('Machine not found');
-                }
-                throw new Error(`Server returned ${response.status}`);
+
+            // Attestation Logic
+            let attStatus = client.attestation_error_count > 0 ? 'red' : 'green';
+            let attText = client.attestation_error_count > 0 ? `Failed (${client.attestation_error_count})` : 'Valid';
+
+            // Integrity Logic
+            let intStatus = 'green';
+            let intText = 'Clean';
+            if (client.integrity_change_count > 1) {
+                intStatus = 'red';
+                intText = `High Activity (${client.integrity_change_count})`;
+            } else if (client.integrity_change_count === 1) {
+                intStatus = 'yellow';
+                intText = 'Modified (1)';
             }
-            
-            const data = await response.json();
-            displayMachineInfo(data.client);
-            
-        } catch (error) {
-            console.error('Error loading machine info:', error);
-            alert(error.message);
-        } finally {
-            goBtn.disabled = false;
-        }
+
+            tr.innerHTML = `
+                <td><strong>${escapeHtml(client.client_id)}</strong></td>
+                <td><span class="status-indicator status-${reachStatus}">${reachText}</span></td>
+                <td><span class="status-indicator status-${attStatus}">${attText}</span></td>
+                <td><span class="status-indicator status-${intStatus}">${intText}</span></td>
+                <td>${formatDate(client.last_seen)}</td>
+                <td><button class="btn btn-small btn-secondary">Details</button></td>
+            `;
+            machineTableBody.appendChild(tr);
+        });
     }
 
-    function displayMachineInfo(client) {
+    function showMachineDetails(client) {
+        detailMachineId.textContent = client.client_id;
         infoContent.innerHTML = `
             <div class="info-grid">
-                <div class="info-item">
-                    <strong>Client ID</strong>
-                    ${escapeHtml(client.client_id)}
-                </div>
-                <div class="info-item">
-                    <strong>Status</strong>
-                    <span class="status-${client.status}">${escapeHtml(client.status)}</span>
-                </div>
-                <div class="info-item">
-                    <strong>Last Seen</strong>
-                    ${formatDate(client.last_seen)}
-                </div>
-                <div class="info-item">
-                    <strong>File Count</strong>
-                    ${client.file_count || 0}
-                </div>
-                <div class="info-item">
-                    <strong>Current Root Hash</strong>
-                    ${client.current_root_hash ? client.current_root_hash.substring(0, 16) + '...' : 'N/A'}
-                </div>
-                <div class="info-item">
-                    <strong>Baseline ID</strong>
-                    ${client.baseline_id || 1}
-                </div>
+                <div class="info-item"><strong>Reachability Status</strong> ${client.status} (${client.missed_heartbeat_count} misses)</div>
+                <div class="info-item"><strong>Attestation Status</strong> ${client.attestation_error_count > 0 ? 'FAIL' : 'OK'}</div>
+                <div class="info-item"><strong>Integrity Count</strong> ${client.integrity_change_count} changes</div>
+                <div class="info-item"><strong>File Count</strong> ${client.file_count || 0}</div>
+                <div class="info-item"><strong>Current Root Hash</strong> <code class="hash-code">${client.current_root_hash || 'N/A'}</code></div>
+                <div class="info-item"><strong>Last Review</strong> ${formatDate(client.last_reviewed_at)}</div>
             </div>
         `;
-        
+
         machineInfo.style.display = 'block';
+        machineInfo.scrollIntoView({ behavior: 'smooth' });
+
         viewLogsBtn.onclick = () => {
             window.location.href = `/machine/${encodeURIComponent(client.client_id)}`;
         };
+
+        // Update review button for this specific client
+        reviewBtn.setAttribute('data-client-id', client.client_id);
     }
 
-    function handleViewLogs() {
-        const machineId = machineIdInput.value.trim();
-        if (machineId) {
-            window.location.href = `/machine/${encodeURIComponent(machineId)}`;
-        } else {
-            alert('Please select or enter a machine ID first');
+    async function handleReview() {
+        const clientId = reviewBtn.getAttribute('data-client-id');
+        if (!clientId) return;
+
+        try {
+            reviewBtn.disabled = true;
+            const response = await fetch(`/api/clients/${encodeURIComponent(clientId)}/review`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (response.ok) {
+                alert('Review completed. Indicators reset.');
+                loadMachines(); // Refresh list
+                machineInfo.style.display = 'none';
+            } else {
+                throw new Error('Failed to submit review');
+            }
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            reviewBtn.disabled = false;
         }
     }
 
@@ -175,12 +158,8 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             await fetch('/api/auth/logout', {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
+                headers: { 'Authorization': `Bearer ${token}` }
             });
-        } catch (error) {
-            console.error('Logout error:', error);
         } finally {
             localStorage.removeItem('fim_token');
             localStorage.removeItem('fim_user');
@@ -194,7 +173,6 @@ document.addEventListener('DOMContentLoaded', function() {
         window.location.href = '/login';
     }
 
-    // Utility functions
     function formatDate(dateString) {
         if (!dateString) return 'Never';
         const date = new Date(dateString);
@@ -202,7 +180,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function escapeHtml(unsafe) {
-        if (unsafe === null || unsafe === undefined) return '';
+        if (!unsafe) return '';
         return unsafe.toString()
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")

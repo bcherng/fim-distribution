@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <title>FIM Dashboard</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
+
 <body>
   <div class="container">
     <header>
@@ -16,29 +18,40 @@
     </header>
 
     <main>
-      <section class="machine-selection">
-        <h2>Select Machine to Monitor</h2>
-        <div class="form-group">
-          <label for="machineSelect">Choose Machine:</label>
-          <select id="machineSelect">
-            <option value="">Loading machines...</option>
-          </select>
-          <button id="refreshBtn" class="btn btn-refresh">Refresh</button>
+      <section class="machine-list">
+        <div class="section-header">
+          <h2>Monitored Machines</h2>
+          <button id="refreshBtn" class="btn btn-refresh">Refresh List</button>
         </div>
 
-        <div class="form-group">
-          <label for="machineId">Or Enter Machine ID:</label>
-          <div class="input-group">
-            <input type="text" id="machineId" placeholder="Enter machine ID manually">
-            <button id="goBtn" class="btn btn-primary">View Machine</button>
-          </div>
+        <div class="table-container">
+          <table id="machineTable">
+            <thead>
+              <tr>
+                <th>Machine Name</th>
+                <th>Reachability</th>
+                <th>Attestation</th>
+                <th>Integrity</th>
+                <th>Last Seen</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="machineTableBody">
+              <tr>
+                <td colspan="6" class="loading">Loading machines...</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </section>
 
       <section id="machineInfo" class="machine-info" style="display: none;">
-        <h3>Machine Information</h3>
+        <h3>Machine Details: <span id="detailMachineId"></span></h3>
         <div id="infoContent"></div>
-        <button id="viewLogsBtn" class="btn btn-primary">View Event Logs</button>
+        <div class="info-actions">
+          <button id="viewLogsBtn" class="btn btn-primary">View Event Logs</button>
+          <button id="reviewBtn" class="btn btn-success">Mark as Reviewed</button>
+        </div>
       </section>
     </main>
 
@@ -49,4 +62,5 @@
 
   <script src="js/dashboard.js"></script>
 </body>
+
 </html>

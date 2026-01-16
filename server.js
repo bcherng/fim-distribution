@@ -60,7 +60,12 @@ async function initDatabase() {
             hardware_info: values[1],
             baseline_id: values[2],
             status: 'online',
-            current_root_hash: null
+            current_root_hash: null,
+            last_reviewed_at: new Date().toISOString(),
+            missed_heartbeat_count: 0,
+            attestation_error_count: 0,
+            integrity_change_count: 0,
+            attestation_valid: true
           });
           return [];
         }
@@ -71,12 +76,29 @@ async function initDatabase() {
         }
 
         if (/UPDATE clients/i.test(query)) {
-          // Simplified update
           const client_id = values[values.length - 1];
           if (mockData.clients.has(client_id)) {
             const client = mockData.clients.get(client_id);
-            if (/current_root_hash =/i.test(query)) {
+            if (/current_root_hash =/i.test(query) && !query.includes('heartbeat')) {
               client.current_root_hash = values[values.length - 2];
+            }
+            if (/status = 'offline'/i.test(query) && client.status === 'online') {
+              client.status = 'offline';
+              client.missed_heartbeat_count++;
+            }
+            if (/attestation_valid =/i.test(query)) {
+              const valid = values[0];
+              client.attestation_valid = valid;
+              if (valid === false) client.attestation_error_count++;
+            }
+            if (/integrity_change_count = integrity_change_count \+ 1/i.test(query)) {
+              client.integrity_change_count++;
+            }
+            if (/last_reviewed_at = CURRENT_TIMESTAMP/i.test(query)) {
+              client.last_reviewed_at = new Date().toISOString();
+              client.missed_heartbeat_count = 0;
+              client.attestation_error_count = 0;
+              client.integrity_change_count = 0;
             }
           }
           return [];
@@ -109,9 +131,35 @@ async function initDatabase() {
           const event = mockData.events.find(e => e.id == id);
           if (event) {
             event.acknowledged = true;
-            console.log('Mock: Event marked as acknowledged:', id);
           }
           return [];
+        }
+
+        if (/INSERT INTO sessions/i.test(query)) {
+          const session_id = values[0];
+          mockData.sessions.set(session_id, {
+            session_id,
+            user_id: values[1],
+            username: values[2],
+            expires_at: values[3]
+          });
+          return [];
+        }
+
+        if (/FROM sessions WHERE session_id =/i.test(query)) {
+          const session_id = values[0];
+          return mockData.sessions.has(session_id) ? [mockData.sessions.get(session_id)] : [];
+        }
+
+        if (/DELETE FROM sessions/i.test(query)) {
+          const session_id = values[0];
+          mockData.sessions.delete(session_id);
+          return [];
+        }
+
+        if (/SELECT c\.\*, COUNT\(CASE WHEN e\.reviewed = false/i.test(query)) {
+          console.log('Mock: Returning all clients for grid');
+          return Array.from(mockData.clients.values());
         }
 
         if (/INSERT INTO baselines/i.test(query)) {
@@ -412,8 +460,7 @@ app.post('/api/clients/heartbeat', requireDaemonAuth, async (req, res) => {
       UPDATE clients 
       SET last_seen = CURRENT_TIMESTAMP, 
           status = 'online',
-          file_count = ${file_count || 0},
-          current_root_hash = ${current_root_hash}
+          file_count = ${file_count || 0}
       WHERE client_id = ${client_id}
     `;
 
@@ -576,7 +623,8 @@ app.post('/api/events/acknowledge', requireDaemonAuth, async (req, res) => {
     await sql`
       UPDATE clients 
       SET current_root_hash = ${event.root_hash},
-          last_seen = CURRENT_TIMESTAMP
+          last_seen = CURRENT_TIMESTAMP,
+          integrity_change_count = integrity_change_count + 1
       WHERE client_id = ${client_id}
     `;
 
@@ -708,7 +756,28 @@ app.get('/api/clients/:client_id', requireAdminAuth, async (req, res) => {
 
     res.json({ client: result[0] });
   } catch (error) {
-    console.error('Error fetching client:', error);
+    console.error('Error fetching client details:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Reset counters for a client
+app.post('/api/clients/:client_id/review', requireAdminAuth, async (req, res) => {
+  try {
+    const { client_id } = req.params;
+
+    await sql`
+      UPDATE clients 
+      SET last_reviewed_at = CURRENT_TIMESTAMP,
+          missed_heartbeat_count = 0,
+          attestation_error_count = 0,
+          integrity_change_count = 0
+      WHERE client_id = ${client_id}
+    `;
+
+    res.json({ status: 'success', message: 'Client indicators reset' });
+  } catch (error) {
+    console.error('Error reviewing client:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
