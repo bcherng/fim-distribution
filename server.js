@@ -206,6 +206,7 @@ async function checkHeartbeats() {
     `;
 
     console.log('Heartbeat check completed');
+    broadcastUpdate('__all__', 'clients_timed_out');
   } catch (error) {
     console.error('Heartbeat check error:', error);
   }
@@ -936,4 +937,11 @@ app.get('/downloads/linux', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// Setup WebSocket server
+wss = new WebSocketServer({ server });
+wss.on('connection', (ws) => {
+  console.log('Dashboard client connected via WebSocket');
+  ws.on('error', console.error);
+});

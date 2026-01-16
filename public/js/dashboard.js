@@ -92,8 +92,16 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Real-time Update Logic
     function connectWebSocket() {
+        // Handle potentially missing protocol
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(`${protocol}//${window.location.host}`);
+        const host = window.location.host || 'localhost:3000';
+        console.log(`Attempting to connect to WebSocket at ${protocol}//${host}`);
+
+        ws = new WebSocket(`${protocol}//${host}`);
+
+        ws.onopen = () => {
+            console.log('WebSocket connection established');
+        };
 
         ws.onmessage = (event) => {
             try {
@@ -109,12 +117,14 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         };
 
-        ws.onopen = () => console.log('WebSocket connected');
         ws.onclose = () => {
-            console.log('WS connection closed. Reconnecting...');
+            console.log('WS connection closed. Reconnecting in 3s...');
             setTimeout(connectWebSocket, 3000);
         };
-        ws.onerror = (err) => console.error('WS error:', err);
+
+        ws.onerror = (err) => {
+            console.error('WS error:', err);
+        };
     }
 
     async function processBatchedUpdates() {
