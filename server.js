@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import { WebSocketServer } from 'ws';
+import Pusher from 'pusher';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,17 +27,24 @@ const mockData = {
   baselines: []
 };
 
-let wss;
+const pusher = (process.env.PUSHER_APP_ID && process.env.PUSHER_KEY && process.env.PUSHER_SECRET && process.env.PUSHER_CLUSTER)
+  ? new Pusher({
+    appId: process.env.PUSHER_APP_ID,
+    key: process.env.PUSHER_KEY,
+    secret: process.env.PUSHER_SECRET,
+    cluster: process.env.PUSHER_CLUSTER,
+    useTLS: true
+  }) : null;
+
+if (!pusher) {
+  console.warn('Pusher environment variables missing. Real-time updates will be disabled.');
+}
 
 function broadcastUpdate(clientId, type = 'client_updated') {
-  if (!wss) return;
-  const message = JSON.stringify({ type, clientId, timestamp: new Date().toISOString() });
-  console.log(`[WS] Broadcasting to ${wss.clients.size} clients:`, message);
-  wss.clients.forEach(client => {
-    if (client.readyState === 1) { // WebSocket.OPEN
-      client.send(message);
-    }
-  });
+  if (!pusher) return;
+  const message = { type, clientId, timestamp: new Date().toISOString() };
+  console.log(`[Pusher] Triggering update on channel 'fim-updates':`, message);
+  pusher.trigger('fim-updates', 'client_updated', message);
 }
 
 // Initialize admin mock data
@@ -382,6 +389,16 @@ app.post('/api/auth/logout', requireAdminAuth, async (req, res) => {
 
 app.get('/api/auth/check', requireAdminAuth, (req, res) => {
   res.json({ authenticated: true, user: req.user });
+});
+
+// App Config API
+app.get('/api/config', (req, res) => {
+  res.json({
+    pusher: {
+      key: process.env.PUSHER_KEY,
+      cluster: process.env.PUSHER_CLUSTER
+    }
+  });
 });
 
 // Daemon API
@@ -938,11 +955,4 @@ app.get('/downloads/linux', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-// Setup WebSocket server
-wss = new WebSocketServer({ server });
-wss.on('connection', (ws) => {
-  console.log('Dashboard client connected via WebSocket');
-  ws.on('error', console.error);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

@@ -23,7 +23,8 @@ document.addEventListener('DOMContentLoaded', function () {
     // Real-time update state
     let dirtyClients = new Set();
     let clientToDelete = null;
-    let ws = null;
+    let pusher = null;
+    let channel = null;
 
     // Check authentication
     const token = localStorage.getItem('fim_token');
@@ -63,7 +64,7 @@ document.addEventListener('DOMContentLoaded', function () {
     confirmRemovalBtn.addEventListener('click', handleConfirmRemoval);
 
     // Initialize systems
-    connectWebSocket();
+    initPusher();
     setInterval(processBatchedUpdates, 5000);
     loadMachines();
 
@@ -90,57 +91,76 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    // Real-time Update Logic
-    function connectWebSocket() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = window.location.host || 'localhost:3000';
-        console.log(`[WS] Connecting to ${protocol}//${host}`);
+    // Real-time Update Logic (Pusher)
+    async function initPusher() {
+        try {
+            wsStatus.textContent = 'Pusher Connecting...';
+            wsStatus.className = 'ws-badge status-yellow';
 
-        wsStatus.textContent = 'WS Connecting...';
-        wsStatus.className = 'ws-badge status-yellow';
+            const configRes = await fetch('/api/config');
+            const config = await configRes.json();
 
-        ws = new WebSocket(`${protocol}//${host}`);
+            if (!config.pusher || !config.pusher.key) {
+                console.warn('[Pusher] Config missing, falling back to polling');
+                wsStatus.textContent = 'Polling (Ready)';
+                return;
+            }
 
-        ws.onopen = () => {
-            console.log('[WS] Connected');
-            wsStatus.textContent = 'WS Connected';
-            wsStatus.className = 'ws-badge status-green';
-        };
+            pusher = new Pusher(config.pusher.key, {
+                cluster: config.pusher.cluster,
+                forceTLS: true
+            });
 
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                console.log('[WS] Message received:', data);
+            channel = pusher.subscribe('fim-updates');
+
+            channel.bind('client_updated', (data) => {
+                console.log('[Pusher] Event received:', data);
                 if (data.clientId) {
                     dirtyClients.add(data.clientId);
                 } else if (data.type === 'client_registered' || data.type === 'client_removed' || data.type === 'clients_timed_out') {
                     dirtyClients.add('__all__');
                 }
-            } catch (e) {
-                console.error('[WS] Parse error:', e);
-            }
-        };
+            });
 
-        ws.onclose = () => {
-            console.log('[WS] Disconnected. Retrying in 3s...');
-            wsStatus.textContent = 'WS Disconnected';
-            wsStatus.className = 'ws-badge status-red';
-            setTimeout(connectWebSocket, 3000);
-        };
+            pusher.connection.bind('connected', () => {
+                console.log('[Pusher] Connected');
+                wsStatus.textContent = 'Pusher (Live)';
+                wsStatus.className = 'ws-badge status-green';
+            });
 
-        ws.onerror = (err) => {
-            console.error('[WS] Error:', err);
-            wsStatus.textContent = 'WS Error';
-            wsStatus.className = 'ws-badge status-red';
-        };
+            pusher.connection.bind('disconnected', () => {
+                console.log('[Pusher] Disconnected');
+                wsStatus.textContent = 'Pusher (Offline)';
+                wsStatus.className = 'ws-badge status-red';
+            });
+
+            pusher.connection.bind('error', (err) => {
+                console.error('[Pusher] Error:', err);
+                wsStatus.textContent = 'Pusher Error';
+                wsStatus.className = 'ws-badge status-red';
+            });
+
+        } catch (error) {
+            console.error('[Pusher] Init failed:', error);
+            wsStatus.textContent = 'Polling (Fallback)';
+        }
     }
 
     async function processBatchedUpdates() {
-        if (dirtyClients.size === 0) return;
+        const isPusherDown = !pusher || pusher.connection.state !== 'connected';
 
-        console.log('[WS] Processing batched updates for:', Array.from(dirtyClients));
+        // If Pusher is down, we poll everything every 5 seconds
+        // If Pusher is up, we only update what's dirty
+        if (dirtyClients.size === 0 && !isPusherDown) return;
+
+        if (isPusherDown) {
+            console.log('[Pusher] Pusher unavailable. Falling back to poll...');
+            wsStatus.textContent = 'Polling (Fallback)';
+            wsStatus.className = 'ws-badge status-yellow';
+        }
+
         const currentDirty = new Set(dirtyClients);
-        const needsFullRefresh = currentDirty.has('__all__');
+        const needsFullRefresh = currentDirty.has('__all__') || isPusherDown;
         dirtyClients.clear();
 
         try {
