@@ -127,9 +127,9 @@ async function initDatabase() {
 
         if (/INSERT INTO events/i.test(query)) {
           const event = {
-            id: mockData.events.length + 1,
-            client_id: values[0],
-            root_hash: values[5],
+            id: values[0] || mockData.events.length + 1,
+            client_id: values[1],
+            root_hash: values[6],
             acknowledged: false
           };
           mockData.events.push(event);
@@ -139,9 +139,8 @@ async function initDatabase() {
 
         if (/FROM events WHERE id =/i.test(query)) {
           const id = values[0];
-          const client_id = values[1];
-          console.log(`Mock: Searching for event id=${id}, client=${client_id} in ${mockData.events.length} events`);
-          const event = mockData.events.find(e => e.id == id && e.client_id == client_id);
+          console.log(`Mock: Searching for event id=${id} in ${mockData.events.length} events`);
+          const event = mockData.events.find(e => e.id == id);
           if (event) console.log('Mock: Event found:', event);
           else console.log('Mock: Event NOT found');
           return event ? [event] : [];
@@ -569,15 +568,33 @@ app.post('/api/events/report', requireDaemonAuth, async (req, res) => {
       }
     }
 
+    // IDEMPOTENCY CHECK: Check if this uniquely generated event ID already exists
+    const existingEvent = await sql`
+      SELECT id FROM events WHERE id = ${id}
+    `;
+
+    if (existingEvent && existingEvent.length > 0) {
+      console.log(`Duplicate event received for client ${client_id}: ${id}. Skipping insertion.`);
+      return res.json({
+        status: 'success',
+        message: 'Duplicate event acknowledged',
+        event_id: existingEvent[0].id,
+        validation: {
+          timestamp: new Date().toISOString(),
+          attestation_valid: true
+        }
+      });
+    }
+
     // Insert event (server has not updated last_valid_hash yet)
     const result = await sql`
       INSERT INTO events (
-        client_id, event_type, file_path, old_hash, new_hash, 
+        id, client_id, event_type, file_path, old_hash, new_hash, 
         root_hash, merkle_proof, last_valid_hash, reviewed, 
         timestamp, acknowledged
       )
       VALUES (
-        ${client_id}, ${event_type}, ${file_path}, ${old_hash}, ${new_hash}, 
+        ${id}, ${client_id}, ${event_type}, ${file_path}, ${old_hash}, ${new_hash}, 
         ${root_hash}, ${JSON.stringify(merkle_proof)}, ${last_valid_hash}, 
         false, ${timestamp || new Date().toISOString()}, false
       )
