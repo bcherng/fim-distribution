@@ -7,7 +7,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const reviewBtn = document.getElementById('reviewBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     const userWelcome = document.getElementById('userWelcome');
-    const wsStatus = document.getElementById('wsStatus');
+    const liveStatus = document.getElementById('liveStatus');
+    const lastUpdated = document.getElementById('lastUpdated');
     const modalBackdrop = document.getElementById('modalBackdrop');
     const closeModalBtn = document.getElementById('closeModalBtn');
 
@@ -94,15 +95,15 @@ document.addEventListener('DOMContentLoaded', function () {
     // Real-time Update Logic (Pusher)
     async function initPusher() {
         try {
-            wsStatus.textContent = 'Pusher Connecting...';
-            wsStatus.className = 'ws-badge status-yellow';
+            liveStatus.textContent = 'Pusher Connecting...';
+            liveStatus.className = 'live-badge status-yellow';
 
             const configRes = await fetch('/api/config');
             const config = await configRes.json();
 
             if (!config.pusher || !config.pusher.key) {
                 console.warn('[Pusher] Config missing, falling back to polling');
-                wsStatus.textContent = 'Polling (Ready)';
+                liveStatus.textContent = 'Polling (Ready)';
                 return;
             }
 
@@ -124,43 +125,34 @@ document.addEventListener('DOMContentLoaded', function () {
 
             pusher.connection.bind('connected', () => {
                 console.log('[Pusher] Connected');
-                wsStatus.textContent = 'Pusher (Live)';
-                wsStatus.className = 'ws-badge status-green';
+                liveStatus.textContent = 'Pusher (Live)';
+                liveStatus.className = 'live-badge status-green';
             });
 
             pusher.connection.bind('disconnected', () => {
                 console.log('[Pusher] Disconnected');
-                wsStatus.textContent = 'Pusher (Offline)';
-                wsStatus.className = 'ws-badge status-red';
+                liveStatus.textContent = 'Pusher (Offline)';
+                liveStatus.className = 'live-badge status-red';
             });
 
             pusher.connection.bind('error', (err) => {
                 console.error('[Pusher] Error:', err);
-                wsStatus.textContent = 'Pusher Error';
-                wsStatus.className = 'ws-badge status-red';
+                liveStatus.textContent = 'Pusher Error';
+                liveStatus.className = 'live-badge status-red';
             });
 
         } catch (error) {
             console.error('[Pusher] Init failed:', error);
-            wsStatus.textContent = 'Polling (Fallback)';
+            liveStatus.textContent = 'Pusher Error';
+            liveStatus.className = 'live-badge status-red';
         }
     }
 
     async function processBatchedUpdates() {
-        const isPusherDown = !pusher || pusher.connection.state !== 'connected';
-
-        // If Pusher is down, we poll everything every 5 seconds
-        // If Pusher is up, we only update what's dirty
-        if (dirtyClients.size === 0 && !isPusherDown) return;
-
-        if (isPusherDown) {
-            console.log('[Pusher] Pusher unavailable. Falling back to poll...');
-            wsStatus.textContent = 'Polling (Fallback)';
-            wsStatus.className = 'ws-badge status-yellow';
-        }
+        if (dirtyClients.size === 0) return;
 
         const currentDirty = new Set(dirtyClients);
-        const needsFullRefresh = currentDirty.has('__all__') || isPusherDown;
+        const needsFullRefresh = currentDirty.has('__all__');
         dirtyClients.clear();
 
         try {
@@ -175,6 +167,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 } else {
                     updateSpecificRows(data.clients || [], currentDirty);
                 }
+                updateLastUpdatedTime();
             }
         } catch (error) {
             console.error('Error processing batched updates:', error);
@@ -249,6 +242,12 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
         machineTableBody.innerHTML = machines.map(m => generateRowHtml(m)).join('');
+        updateLastUpdatedTime();
+    }
+
+    function updateLastUpdatedTime() {
+        const now = new Date();
+        lastUpdated.textContent = `Last updated: ${now.toLocaleTimeString()}`;
     }
 
     window.initiateRemoval = function (clientId) {

@@ -387,13 +387,20 @@ header p {
   cursor: pointer;
 }
 
-/* WebSocket Badge */
-.ws-badge {
+/* Live Status Badge */
+.live-badge {
   font-size: 0.75rem;
   padding: 2px 8px;
   border-radius: 12px;
   margin-right: 1rem;
   font-weight: 500;
+}
+
+.last-updated {
+  font-size: 0.8rem;
+  color: #7f8c8d;
+  margin-right: 1.5rem;
+  font-style: italic;
 }
 
 .status-red {
