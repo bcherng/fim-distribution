@@ -176,6 +176,8 @@ document.addEventListener('DOMContentLoaded', function () {
         machines.forEach(m => {
             if (!dirtySet.has(m.client_id)) return;
 
+            console.log(`[Dashboard] Updating row for ${m.client_id}, Last Seen: ${m.last_seen}, Status: ${m.status}`);
+
             const row = document.querySelector(`tr[data-client-id="${m.client_id}"]`);
             if (row) {
                 console.log('[WS] Updating row for machine:', m.client_id);
@@ -384,7 +386,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 reviewBtn.setAttribute('data-client-id', client.client_id);
 
                 // Render Chart
-                renderUptimeChart(uptimeData.history);
+                renderUptimeChart(uptimeData.intervals);
             })
             .catch(err => alert(err.message));
     };

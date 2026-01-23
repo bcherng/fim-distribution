@@ -570,6 +570,7 @@ app.post('/api/clients/heartbeat', requireDaemonAuth, async (req, res) => {
       client.status = 'online'; // Received heartbeat -> Online
       client.last_seen = now.toISOString();
       client.missed_heartbeat_count = 0; // Reset misses on success
+      console.log(`[Heartbeat] Updated last_seen for ${client_id} to ${client.last_seen}`);
     }
 
     // Still perform SQL update for persistence
