@@ -60,14 +60,6 @@ async function initDatabase() {
     sql = neon(process.env.DATABASE_URL);
     console.log('Neon database connection initialized');
 
-    // Auto-migration: Ensure last_boot_id exists
-    try {
-      await sql`ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_boot_id TEXT`;
-      console.log('Migration verified: clients.last_boot_id exists');
-    } catch (err) {
-      console.warn('Migration warning (last_boot_id):', err.message);
-    }
-
     // Start heartbeat checker
     setInterval(checkHeartbeats, HEARTBEAT_INTERVAL);
   } catch (error) {
@@ -587,7 +579,8 @@ app.post('/api/clients/heartbeat', requireDaemonAuth, async (req, res) => {
       SET last_seen = CURRENT_TIMESTAMP, 
           status = 'online',
           file_count = ${file_count || 0},
-          last_boot_id = ${boot_id || null}
+          last_boot_id = ${boot_id || null},
+          current_root_hash = ${current_root_hash || null}
       WHERE client_id = ${client_id}
     `;
 
@@ -888,25 +881,8 @@ app.get('/api/clients/:id/uptime', requireAdminAuth, async (req, res) => {
     );
 
     // If no data (new client), create a fake history for demo purposes
-    if (intervals.length === 0) {
-      // Mock Up History
-      intervals = [
-        { client_id, start: sevenDaysAgo.toISOString(), end: null, state: 'UP' }
-      ];
-      // Inject some failures for demo
-      // e.g. 3 days ago, down for 2 hours
-      const d = new Date(now); d.setDate(d.getDate() - 3);
-      const ruptureStart = new Date(d);
-      const ruptureEnd = new Date(d.getTime() + 2 * 60 * 60 * 1000);
-      intervals.push({
-        client_id,
-        start: ruptureStart.toISOString(),
-        end: ruptureEnd.toISOString(),
-        state: 'DOWN'
-      });
-      // Sort
-      intervals.sort((a, b) => new Date(a.start) - new Date(b.start));
-    }
+    // Sort
+    intervals.sort((a, b) => new Date(a.start) - new Date(b.start));
 
     res.json({ client_id, intervals });
   } catch (error) {

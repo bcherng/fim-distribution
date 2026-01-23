@@ -418,7 +418,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
             const track = document.createElement('div');
             track.className = 'timeline-track';
-            track.title = 'Base: Down (Red)'; // Base color is red
+            track.title = 'No Data'; // Grey base
 
             // Filter intervals overlapping this day
             intervals.forEach(inv => {
