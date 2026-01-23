@@ -90,6 +90,114 @@ document.addEventListener('DOMContentLoaded', function () {
         renderMachineTable(filtered, true); // true = don't update cache
     }
 
+    // Real-time Update Logic (Pusher)
+    async function initPusher() {
+        try {
+            liveStatus.textContent = 'Pusher Connecting...';
+            liveStatus.className = 'live-badge status-yellow';
+
+            const configRes = await fetch('/api/config');
+            const config = await configRes.json();
+
+            if (!config.pusher || !config.pusher.key) {
+                console.warn('[Pusher] Config missing, falling back to polling');
+                liveStatus.textContent = 'Polling (Ready)';
+                return;
+            }
+
+            pusher = new Pusher(config.pusher.key, {
+                cluster: config.pusher.cluster,
+                forceTLS: true
+            });
+
+            channel = pusher.subscribe('fim-updates');
+
+            channel.bind('client_updated', (data) => {
+                console.log('[Pusher] Event received:', data);
+                if (data.clientId) {
+                    dirtyClients.add(data.clientId);
+                } else if (data.type === 'client_registered' || data.type === 'client_removed' || data.type === 'clients_timed_out') {
+                    dirtyClients.add('__all__');
+                }
+            });
+
+            pusher.connection.bind('connected', () => {
+                console.log('[Pusher] Connected');
+                liveStatus.textContent = 'Pusher (Live)';
+                liveStatus.className = 'live-badge status-green';
+            });
+
+            pusher.connection.bind('disconnected', () => {
+                console.log('[Pusher] Disconnected');
+                liveStatus.textContent = 'Pusher (Offline)';
+                liveStatus.className = 'live-badge status-red';
+            });
+
+            pusher.connection.bind('error', (err) => {
+                console.error('[Pusher] Error:', err);
+                liveStatus.textContent = 'Pusher Error';
+                liveStatus.className = 'live-badge status-red';
+            });
+
+        } catch (error) {
+            console.error('[Pusher] Init failed:', error);
+            liveStatus.textContent = 'Pusher Error';
+            liveStatus.className = 'live-badge status-red';
+        }
+    }
+
+    async function processBatchedUpdates() {
+        if (dirtyClients.size === 0) return;
+
+        const currentDirty = new Set(dirtyClients);
+        const needsFullRefresh = currentDirty.has('__all__');
+        dirtyClients.clear();
+
+        try {
+            const response = await fetch('/api/clients', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (needsFullRefresh) {
+                    renderMachineTable(data.clients || []);
+                } else {
+                    updateSpecificRows(data.clients || [], currentDirty);
+                }
+                updateLastUpdatedTime();
+            }
+        } catch (error) {
+            console.error('Error processing batched updates:', error);
+        }
+    }
+
+    function updateSpecificRows(machines, dirtySet) {
+        machines.forEach(m => {
+            if (!dirtySet.has(m.client_id)) return;
+
+            const row = document.querySelector(`tr[data-client-id="${m.client_id}"]`);
+            if (row) {
+                console.log('[WS] Updating row for machine:', m.client_id);
+                // Create temp table to parse new row HTML
+                const newRowHtml = generateRowHtml(m);
+                const tempTable = document.createElement('tbody');
+                tempTable.innerHTML = newRowHtml;
+                const newRow = tempTable.firstElementChild;
+                if (newRow) {
+                    row.replaceWith(newRow);
+                }
+            } else {
+                renderMachineTable(machines);
+            }
+        });
+    }
+
+    function updateLastUpdatedTime() {
+        const now = new Date();
+        lastUpdated.textContent = `Last updated: ${now.toLocaleTimeString()}`;
+    }
+
     // ... existing initPusher ...
 
     async function loadMachines() {
