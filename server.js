@@ -17,14 +17,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const DAEMON_JWT_SECRET = process.env.DAEMON_JWT_SECRET || 'daemon-secret-key-change-in-production';
 const HEARTBEAT_INTERVAL = 15 * 60 * 1000; // 15 minutes
-const HEARTBEAT_TIMEOUT = 20 * 60 * 1000; // 20 minutes (grace period)
+
 
 const mockData = {
   clients: new Map(),
   admins: new Map(),
   events: [],
   sessions: new Map(),
-  baselines: []
+  baselines: [],
+  intervals: [] // { client_id, start, end, state: 'UP'|'SUSPECT'|'DOWN' }
 };
 
 const pusher = (process.env.PUSHER_APP_ID && process.env.PUSHER_KEY && process.env.PUSHER_SECRET && process.env.PUSHER_CLUSTER)
@@ -120,6 +121,10 @@ async function initDatabase() {
               client.missed_heartbeat_count = 0;
               client.attestation_error_count = 0;
               client.integrity_change_count = 0;
+              // Reset status to online on review if it was warning/offline
+              if (client.status === 'warning' || client.status === 'offline') {
+                client.status = 'online';
+              }
             }
           }
           return [];
@@ -200,19 +205,54 @@ async function initDatabase() {
 
 initDatabase();
 
-// Heartbeat checker - marks clients as offline if no heartbeat
+// Uptime Interval Helper
+// Closes current open interval for client and opens a new one
+function transitionState(client_id, newState, timestamp = new Date()) {
+  const active = mockData.intervals.find(i => i.client_id === client_id && !i.end);
+
+  // If state is same and not ended, do nothing (unless boot_id changed, handled by caller)
+  if (active && active.state === newState) return;
+
+  if (active) {
+    active.end = timestamp.toISOString();
+  }
+
+  mockData.intervals.push({
+    client_id,
+    start: timestamp.toISOString(),
+    end: null,
+    state: newState
+  });
+}
+
+// Heartbeat checker - Timeouts
 async function checkHeartbeats() {
   try {
-    const cutoffTime = new Date(Date.now() - HEARTBEAT_TIMEOUT);
+    const now = new Date();
 
-    await sql`
-      UPDATE clients 
-      SET status = 'offline'
-      WHERE last_seen < ${cutoffTime.toISOString()} 
-        AND status = 'online'
-    `;
+    // Iterate all clients (Mock DB logic)
+    mockData.clients.forEach(client => {
+      if (client.status === 'deregistered') return;
 
-    console.log('Heartbeat check completed');
+      const lastSeen = new Date(client.last_seen || client.last_reviewed_at);
+      const diffSeconds = (now - lastSeen) / 1000;
+      // const interval = 15; // DEBUG: 15 seconds for testing
+      const interval = 900; // 15 mins default
+
+      // Logic: UP -> SUSPECT (> 1.5x interval)
+      if (client.status === 'online' && diffSeconds > (interval * 1.5)) {
+        console.log(`[Watchdog] Client ${client.client_id} -> SUSPECT`);
+        client.status = 'warning'; // UI uses 'warning' for SUSPECT
+        transitionState(client.client_id, 'SUSPECT', now);
+      }
+      // Logic: SUSPECT -> DOWN (> 3.0x interval)
+      else if (client.status === 'warning' && diffSeconds > (interval * 3.0)) {
+        console.log(`[Watchdog] Client ${client.client_id} -> DOWN`);
+        client.status = 'offline';
+        transitionState(client.client_id, 'DOWN', now);
+      }
+    });
+
     broadcastUpdate('__all__', 'clients_timed_out');
   } catch (error) {
     console.error('Heartbeat check error:', error);
@@ -267,6 +307,14 @@ async function requireDaemonAuth(req, res, next) {
 
     if (clientResult.length === 0) {
       return res.status(401).json({ error: 'Client not registered' });
+    }
+
+    const client = clientResult[0];
+    if (client.status === 'deregistered') {
+      return res.status(403).json({
+        error: 'Client is deregistered',
+        status: 'deregistered' // Specific signal for client to uninstall/stop
+      });
     }
 
     req.daemon = {
@@ -418,6 +466,8 @@ app.post('/api/clients/register', async (req, res) => {
         baseline_id = EXCLUDED.baseline_id,
         last_seen = CURRENT_TIMESTAMP,
         status = 'online'
+        -- We purposely DO NOT reset metrics like integrity_change_count here
+        -- to track reinstallation history.
     `;
 
     broadcastUpdate(client_id, 'client_registered');
@@ -486,14 +536,49 @@ app.post('/api/auth/verify-admin', async (req, res) => {
 
 app.post('/api/clients/heartbeat', requireDaemonAuth, async (req, res) => {
   try {
-    const { file_count, current_root_hash } = req.body;
+    const { file_count, current_root_hash, boot_id } = req.body;
     const client_id = req.daemon.client_id;
+    const now = new Date();
 
+    // Mock DB: Get client to check boot_id
+    const client = mockData.clients.get(client_id);
+
+    if (client) {
+      // State Transition Logic
+      let shouldTransition = false;
+
+      // 1. Recovering from bad state
+      if (client.status !== 'online') {
+        shouldTransition = true;
+      }
+
+      // 2. Boot ID Change (Restart)
+      if (boot_id && client.last_boot_id && boot_id !== client.last_boot_id) {
+        shouldTransition = true;
+        console.log(`[Heartbeat] Boot ID changed for ${client_id}. Restart detected.`);
+      }
+
+      if (shouldTransition) {
+        transitionState(client_id, 'UP', now);
+      } else {
+        // Ensure we have an open UP interval if none exists
+        const active = mockData.intervals.find(i => i.client_id === client_id && !i.end);
+        if (!active) transitionState(client_id, 'UP', now);
+      }
+
+      client.last_boot_id = boot_id;
+      client.status = 'online'; // Received heartbeat -> Online
+      client.last_seen = now.toISOString();
+      client.missed_heartbeat_count = 0; // Reset misses on success
+    }
+
+    // Still perform SQL update for persistence
     await sql`
       UPDATE clients 
       SET last_seen = CURRENT_TIMESTAMP, 
           status = 'online',
-          file_count = ${file_count || 0}
+          file_count = ${file_count || 0},
+          last_boot_id = ${boot_id || null}
       WHERE client_id = ${client_id}
     `;
 
@@ -778,6 +863,85 @@ app.get('/api/admin/list', requireAdminAuth, async (req, res) => {
   }
 });
 
+// Uptime History API - Returns Intervals
+app.get('/api/clients/:id/uptime', requireAdminAuth, async (req, res) => {
+  try {
+    const client_id = req.params.id;
+    const now = new Date();
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(now.getDate() - 7);
+
+    // Filter relevant intervals
+    // In a real DB this would be WHERE start > sevenDaysAgo
+    let intervals = mockData.intervals.filter(i =>
+      i.client_id === client_id &&
+      (new Date(i.start) > sevenDaysAgo || (i.end && new Date(i.end) > sevenDaysAgo) || !i.end)
+    );
+
+    // If no data (new client), create a fake history for demo purposes
+    if (intervals.length === 0) {
+      // Mock Up History
+      intervals = [
+        { client_id, start: sevenDaysAgo.toISOString(), end: null, state: 'UP' }
+      ];
+      // Inject some failures for demo
+      // e.g. 3 days ago, down for 2 hours
+      const d = new Date(now); d.setDate(d.getDate() - 3);
+      const ruptureStart = new Date(d);
+      const ruptureEnd = new Date(d.getTime() + 2 * 60 * 60 * 1000);
+      intervals.push({
+        client_id,
+        start: ruptureStart.toISOString(),
+        end: ruptureEnd.toISOString(),
+        state: 'DOWN'
+      });
+      // Sort
+      intervals.sort((a, b) => new Date(a.start) - new Date(b.start));
+    }
+
+    res.json({ client_id, intervals });
+  } catch (error) {
+    console.error('Error fetching uptime:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Client Deregistration (Soft Delete)
+app.delete('/api/clients/:id', requireAdminAuth, async (req, res) => {
+  try {
+    const client_id = req.params.id;
+    const { username, password } = req.body;
+
+    // Double-check admin credentials if provided (extra security layer requested)
+    if (username && password) {
+      const result = await sql`SELECT * FROM admins WHERE username = ${username}`;
+      const admin = result[0];
+      if (!admin || !(await bcrypt.compare(password, admin.password_hash))) {
+        return res.status(401).json({ error: 'Invalid admin credentials' });
+      }
+    }
+
+    // Mark as deregistered - this will trigger 403 on next heartbeat
+    await sql`
+      UPDATE clients 
+      SET status = 'deregistered',
+          last_seen = CURRENT_TIMESTAMP
+      WHERE client_id = ${client_id}
+    `;
+
+    console.log(`Client marked for deregistration: ${client_id}`);
+    broadcastUpdate(client_id, 'client_removed');
+
+    res.json({
+      status: 'success',
+      message: 'Client deregistered. It will be notified on next contact.'
+    });
+  } catch (error) {
+    console.error('Error deregistering client:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Client management routes
 app.get('/api/clients', requireAdminAuth, async (req, res) => {
   try {
@@ -788,6 +952,7 @@ app.get('/api/clients', requireAdminAuth, async (req, res) => {
         MAX(e.timestamp) as last_event
       FROM clients c
       LEFT JOIN events e ON c.client_id = e.client_id
+      WHERE c.status != 'deregistered' -- Hide deregistered clients from dashboard list
       GROUP BY c.client_id
       ORDER BY c.last_seen DESC
     `;
