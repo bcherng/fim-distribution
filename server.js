@@ -1018,27 +1018,43 @@ app.get('/api/clients/:client_id/events', requireAdminAuth, async (req, res) => 
   try {
     const { client_id } = req.params;
     const { unreviewed_only = false, limit = 100, sort = 'desc' } = req.query;
-    const sortDir = sort.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+    const isAsc = sort.toLowerCase() === 'asc';
+    const limitNum = parseInt(limit);
 
-    let query;
+    let result;
     if (unreviewed_only === 'true') {
-      // For approval queue (ASC usually)
-      query = sql`
-        SELECT * FROM events 
-        WHERE client_id = ${client_id} AND reviewed = false
-        ORDER BY timestamp ${sort.toLowerCase() === 'asc' ? sql`ASC` : sql`DESC`}
-        LIMIT ${parseInt(limit)}
-      `;
+      if (isAsc) {
+        result = await sql`
+          SELECT * FROM events 
+          WHERE client_id = ${client_id} AND reviewed = false
+          ORDER BY timestamp ASC 
+          LIMIT ${limitNum}
+        `;
+      } else {
+        result = await sql`
+          SELECT * FROM events 
+          WHERE client_id = ${client_id} AND reviewed = false
+          ORDER BY timestamp DESC 
+          LIMIT ${limitNum}
+        `;
+      }
     } else {
-      query = sql`
-        SELECT * FROM events 
-        WHERE client_id = ${client_id}
-        ORDER BY timestamp ${sort.toLowerCase() === 'asc' ? sql`ASC` : sql`DESC`}
-        LIMIT ${parseInt(limit)}
-      `;
+      if (isAsc) {
+        result = await sql`
+          SELECT * FROM events 
+          WHERE client_id = ${client_id}
+          ORDER BY timestamp ASC 
+          LIMIT ${limitNum}
+        `;
+      } else {
+        result = await sql`
+          SELECT * FROM events 
+          WHERE client_id = ${client_id}
+          ORDER BY timestamp DESC 
+          LIMIT ${limitNum}
+        `;
+      }
     }
-
-    const result = await query;
     res.json({ events: result });
   } catch (error) {
     console.error('Error fetching events:', error);
