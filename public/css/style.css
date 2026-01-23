@@ -103,10 +103,8 @@ textarea {
 .timeline-track {
   flex: 1;
   height: 20px;
-  background-color: #eee;
-  /* Default Red/Down if gaps mean down? Or Grey? User said Red/White blocks. Gaps are technical Down usually. */
-  background-color: #e74c3c;
-  /* Base is RED (Down), we paint WHITE (Up) over it */
+  background-color: #e0e0e0;
+  /* Grey for "No Data" / Gaps */
   position: relative;
   border-radius: 4px;
   overflow: hidden;
@@ -120,24 +118,22 @@ textarea {
 }
 
 .block-up {
-  background-color: #fff;
-  border-left: 1px solid #eee;
-  border-right: 1px solid #eee;
+  background-color: #2ecc71;
+  /* Green for Up */
+  border-left: 1px solid #e0e0e0;
+  border-right: 1px solid #e0e0e0;
 }
 
-/* Up */
 .block-suspect {
-  background-color: #fff;
-  opacity: 0.8;
+  background-color: #f1c40f;
+  /* Yellow for Suspect */
 }
 
-/* Suspect - maybe slightly grey or just white */
 .block-down {
   background-color: #e74c3c;
+  /* Red for Down */
   z-index: 1;
 }
-
-/* Explicit Down intervals if needed */
 
 
 

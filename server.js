@@ -60,6 +60,14 @@ async function initDatabase() {
     sql = neon(process.env.DATABASE_URL);
     console.log('Neon database connection initialized');
 
+    // Auto-migration: Ensure last_boot_id exists
+    try {
+      await sql`ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_boot_id TEXT`;
+      console.log('Migration verified: clients.last_boot_id exists');
+    } catch (err) {
+      console.warn('Migration warning (last_boot_id):', err.message);
+    }
+
     // Start heartbeat checker
     setInterval(checkHeartbeats, HEARTBEAT_INTERVAL);
   } catch (error) {
