@@ -9,15 +9,20 @@
 
 <body>
   <div class="container">
-    <header>
+    <header style="display: flex; justify-content: space-between; align-items: center; text-align: left; padding-bottom: 10px; margin-bottom: 20px;">
       <h1>FIM Dashboard</h1>
-      <div class="user-info">
+      <div class="user-info" style="margin-bottom: 0;">
         <span id="liveStatus" class="live-badge status-red">Disconnected</span>
         <span id="lastUpdated" class="last-updated">Never</span>
         <span id="userWelcome">Welcome, Admin</span>
         <button id="logoutBtn" class="btn btn-logout">Logout</button>
       </div>
     </header>
+
+    <div class="search-container">
+        <i class="search-icon">🔍</i> <!-- Simple unicode icon or use SVG -->
+        <input type="text" id="searchInput" class="search-input" placeholder="Search machines by ID or status...">
+    </div>
 
     <main>
       <section class="machine-list">
@@ -69,8 +74,8 @@
           <button id="closeRemovalModalBtn" class="btn-close">&times;</button>
         </div>
         <div class="modal-body">
-          <p>Are you sure you want to remove <strong id="removalMachineId"></strong>?</p>
-          <p class="warning-text">This will delete all events and baseline data for this machine.</p>
+          <p>Are you sure you want to deregister <strong id="removalMachineId"></strong>?</p>
+          <p class="warning-text">The client will be notified to stop monitoring. Logs will be preserved.</p>
           <div class="form-group" style="margin-top: 20px;">
             <label for="adminUsername">Admin Username</label>
             <input type="text" id="adminUsername" placeholder="Enter admin username">
@@ -82,15 +87,15 @@
         </div>
         <div class="modal-footer">
           <button id="cancelRemovalBtn" class="btn btn-secondary">Cancel</button>
-          <button id="confirmRemovalBtn" class="btn btn-admin">Confirm Removal</button>
+          <button id="confirmRemovalBtn" class="btn btn-admin">Confirm Deregistration</button>
         </div>
       </section>
     </main>
-
-    <div class="navigation">
-      <button onclick="window.location.href='/'" class="btn btn-secondary">Back to Home</button>
-    </div>
   </div>
+
+  <footer class="sticky-footer">
+      <button onclick="window.location.href='/'" class="btn btn-secondary">Back to Home</button>
+  </footer>
 
   <script src="https://js.pusher.com/8.3.0/pusher.min.js"></script>
   <script src="js/dashboard.js"></script>
