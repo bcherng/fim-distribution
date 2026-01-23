@@ -1,52 +1,149 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
-  <title>Machine Details - FIM System</title>
+  <title>Machine Event Logs</title>
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* Specific styles for machine view */
+    .tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      border-bottom: 1px solid #e0e0e0;
+      padding-bottom: 10px;
+    }
+
+    .tab-btn {
+      padding: 10px 20px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 500;
+      color: #7f8c8d;
+      border-bottom: 3px solid transparent;
+    }
+
+    .tab-btn.active {
+      color: #3498db;
+      border-bottom-color: #3498db;
+    }
+
+    .view-section {
+      display: none;
+    }
+
+    .view-section.active {
+      display: block;
+    }
+
+    .approval-card {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+      margin-bottom: 15px;
+      border-left: 5px solid #f1c40f;
+    }
+
+    .approval-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 15px;
+    }
+
+    .log-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .log-table th,
+    .log-table td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid #eee;
+    }
+
+    .log-table th {
+      background: #f9f9f9;
+    }
+
+    .status-reviewed {
+      color: #2ecc71;
+      font-weight: bold;
+    }
+
+    .status-pending {
+      color: #f39c12;
+      font-weight: bold;
+    }
+  </style>
 </head>
+
 <body>
   <div class="container">
-    <header>
-      <h1>Machine Event Logs</h1>
-      <div class="user-info">
+    <header
+      style="display: flex; justify-content: space-between; align-items: center; text-align: left; padding-bottom: 10px; margin-bottom: 20px; border-bottom: 2px solid #e0e0e0;">
+      <div>
+        <h1 style="margin:0; font-size: 2em; color: #2c3e50;">Machine Event Logs</h1>
+        <p style="margin:5px 0 0; color: #7f8c8d;" id="machineIdDisplay">Loading...</p>
+      </div>
+      <div class="user-info" style="margin-bottom: 0;">
         <span id="userWelcome">Welcome, Admin</span>
         <button id="logoutBtn" class="btn btn-logout">Logout</button>
       </div>
     </header>
 
     <main>
-      <div class="machine-header">
-        <h2 id="machineTitle">Machine: <span id="machineIdDisplay">Loading...</span></h2>
-        <div class="machine-status">
-          <span id="machineStatus"></span>
-          <span id="lastSeen"></span>
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="approval">Approval Mode</button>
+        <button class="tab-btn" data-tab="log">Log Mode</button>
+        <button class="tab-btn" data-tab="graph">Graph Mode</button>
+      </div>
+
+      <!-- Approval Mode -->
+      <div id="approvalView" class="view-section active">
+        <div id="approvalContainer">
+          <div class="loading">Loading pending events...</div>
         </div>
       </div>
 
-      <div class="events-section">
-        <h3>Recent Events</h3>
-        <div class="controls">
-          <button id="refreshEventsBtn" class="btn btn-refresh">Refresh Events</button>
-          <select id="eventLimit">
-            <option value="50">Last 50 events</option>
-            <option value="100">Last 100 events</option>
-            <option value="200">Last 200 events</option>
-          </select>
-        </div>
-        
-        <div id="eventsList" class="events-list">
-          <div class="loading">Loading events...</div>
+      <!-- Log Mode -->
+      <div id="logView" class="view-section">
+        <table class="log-table">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Type</th>
+              <th>File</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="logTableBody">
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Graph Mode -->
+      <div id="graphView" class="view-section">
+        <h3>24-Hour Activity</h3>
+        <div id="graphContainer" class="timeline-container">
+          <!-- Graph rendered here -->
+          <p>Loading graph...</p>
         </div>
       </div>
+
     </main>
-
-    <div class="navigation">
-      <button onclick="window.location.href='/dashboard'" class="btn btn-secondary">Back to Dashboard</button>
-      <button onclick="window.location.href='/'" class="btn btn-secondary">Back to Home</button>
-    </div>
   </div>
 
+  <footer class="sticky-footer">
+    <button onclick="window.location.href='/dashboard'" class="btn btn-secondary">Back to Dashboard</button>
+  </footer>
+
+  <script src="https://js.pusher.com/8.3.0/pusher.min.js"></script>
   <script src="/js/machine.js"></script>
 </body>
+
 </html>

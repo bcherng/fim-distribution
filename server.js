@@ -16,7 +16,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const DAEMON_JWT_SECRET = process.env.DAEMON_JWT_SECRET || 'daemon-secret-key-change-in-production';
-const HEARTBEAT_INTERVAL = 15 * 60 * 1000; // 15 minutes
+const HEARTBEAT_INTERVAL = 6 * 60 * 1000; // 6 minutes
 
 
 const mockData = {
@@ -59,6 +59,15 @@ async function initDatabase() {
     const { neon } = await import('@neondatabase/serverless');
     sql = neon(process.env.DATABASE_URL);
     console.log('Neon database connection initialized');
+
+    // Auto-migration: Ensure columns exist
+    try {
+      await sql`ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_boot_id TEXT`;
+      await sql`ALTER TABLE events ADD COLUMN IF NOT EXISTS client_event_id TEXT`;
+      console.log('Migrations verified: last_boot_id, client_event_id');
+    } catch (err) {
+      console.warn('Migration warning:', err.message);
+    }
 
     // Start heartbeat checker
     setInterval(checkHeartbeats, HEARTBEAT_INTERVAL);
@@ -656,8 +665,9 @@ app.post('/api/events/report', requireDaemonAuth, async (req, res) => {
     }
 
     // IDEMPOTENCY CHECK: Check if this uniquely generated event ID already exists
+    // We check against client_event_id (the UUID string from client)
     const existingEvent = await sql`
-      SELECT id FROM events WHERE id = ${id}
+      SELECT id FROM events WHERE client_event_id = ${id}
     `;
 
     if (existingEvent && existingEvent.length > 0) {
@@ -674,9 +684,10 @@ app.post('/api/events/report', requireDaemonAuth, async (req, res) => {
     }
 
     // Insert event (server has not updated last_valid_hash yet)
+    // We store the client's string ID in client_event_id, and let DB generate the serial ID
     const result = await sql`
       INSERT INTO events (
-        id, client_id, event_type, file_path, old_hash, new_hash, 
+        client_event_id, client_id, event_type, file_path, old_hash, new_hash, 
         root_hash, merkle_proof, last_valid_hash, reviewed, 
         timestamp, acknowledged
       )
@@ -698,6 +709,19 @@ app.post('/api/events/report', requireDaemonAuth, async (req, res) => {
           integrity_status = 'modified'
       WHERE client_id = ${client_id}
     `;
+
+    // Refresh memory state (Watcher reset)
+    const memClient = mockData.clients.get(client_id);
+    if (memClient) {
+      memClient.last_seen = new Date().toISOString();
+      memClient.missed_heartbeat_count = 0;
+      memClient.status = 'online';
+      // Ensure interval is UP
+      const active = mockData.intervals.find(i => i.client_id === client_id && !i.end);
+      if (!active || active.state !== 'UP') {
+        transitionState(client_id, 'UP', new Date());
+      }
+    }
 
     const validation = {
       timestamp: new Date().toISOString(),
@@ -993,21 +1017,23 @@ app.post('/api/clients/:client_id/review', requireAdminAuth, async (req, res) =>
 app.get('/api/clients/:client_id/events', requireAdminAuth, async (req, res) => {
   try {
     const { client_id } = req.params;
-    const { unreviewed_only = false, limit = 100 } = req.query;
+    const { unreviewed_only = false, limit = 100, sort = 'desc' } = req.query;
+    const sortDir = sort.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
     let query;
     if (unreviewed_only === 'true') {
+      // For approval queue (ASC usually)
       query = sql`
         SELECT * FROM events 
         WHERE client_id = ${client_id} AND reviewed = false
-        ORDER BY timestamp DESC 
+        ORDER BY timestamp ${sort.toLowerCase() === 'asc' ? sql`ASC` : sql`DESC`}
         LIMIT ${parseInt(limit)}
       `;
     } else {
       query = sql`
         SELECT * FROM events 
         WHERE client_id = ${client_id}
-        ORDER BY timestamp DESC 
+        ORDER BY timestamp ${sort.toLowerCase() === 'asc' ? sql`ASC` : sql`DESC`}
         LIMIT ${parseInt(limit)}
       `;
     }
@@ -1016,6 +1042,37 @@ app.get('/api/clients/:client_id/events', requireAdminAuth, async (req, res) => 
     res.json({ events: result });
   } catch (error) {
     console.error('Error fetching events:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/events/:id/review', requireAdminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { approved = true } = req.body; // Future proofing if we want to 'reject'?
+
+    const result = await sql`
+      UPDATE events 
+      SET reviewed = true, 
+          reviewed_at = CURRENT_TIMESTAMP, 
+          reviewed_by = ${req.user.username}
+      WHERE id = ${id}
+      RETURNING client_id
+    `;
+
+    if (result.length > 0) {
+      // If all events for this client are reviewed, set integrity to clean
+      const client_id = result[0].client_id;
+      const pending = await sql`SELECT count(*) as count FROM events WHERE client_id = ${client_id} AND reviewed = false`;
+
+      if (parseInt(pending[0].count) === 0) {
+        await sql`UPDATE clients SET integrity_status = 'clean' WHERE client_id = ${client_id}`;
+      }
+    }
+
+    res.json({ status: 'success', message: 'Event reviewed' });
+  } catch (error) {
+    console.error('Error reviewing event:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

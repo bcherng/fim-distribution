@@ -367,12 +367,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
                 infoContent.innerHTML = `
                 <div class="info-grid" style="margin-bottom: 20px;">
+                    <h4 style="margin-top:0; margin-bottom:15px; grid-column: 1/-1;">Machine Details Since Last Review: ${formatDate(client.last_reviewed_at)}</h4>
                     <div class="info-item"><strong>Reachability</strong> ${client.status} (${client.missed_heartbeat_count} misses)</div>
                     <div class="info-item"><strong>Attestation</strong> ${client.attestation_error_count > 0 ? 'FAIL' : 'OK'}</div>
                     <div class="info-item"><strong>Integrity</strong> ${client.integrity_change_count} changes</div>
-                    <div class="info-item"><strong>Files</strong> ${client.file_count || 0}</div>
                     <div class="info-item"><strong>Root Hash</strong> <code class="hash-code">${client.current_root_hash || 'N/A'}</code></div>
-                    <div class="info-item"><strong>Last Review</strong> ${formatDate(client.last_reviewed_at)}</div>
                 </div>
                 <div class="chart-container" style="position: relative; height: 200px; width: 100%;">
                     <canvas id="uptimeChart"></canvas>
