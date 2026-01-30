@@ -4,7 +4,6 @@ document.addEventListener('DOMContentLoaded', function () {
     const detailMachineId = document.getElementById('detailMachineId');
     const infoContent = document.getElementById('infoContent');
     const viewLogsBtn = document.getElementById('viewLogsBtn');
-    const reviewBtn = document.getElementById('reviewBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     const userWelcome = document.getElementById('userWelcome');
     const liveStatus = document.getElementById('liveStatus');
@@ -40,7 +39,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Event listeners
     logoutBtn.addEventListener('click', handleLogout);
-    reviewBtn.addEventListener('click', handleReview);
+
 
     // Modal closing logic
     const closeModal = () => {
@@ -270,9 +269,18 @@ document.addEventListener('DOMContentLoaded', function () {
 
         // Disable actions if deregistered
         const actionsDisabled = m.status === 'deregistered' ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : '';
-        const removeBtn = m.status === 'deregistered'
-            ? `<span title="Pending removal">⏳</span>`
-            : `<button onclick="window.initiateRemoval('${m.client_id}')" class="btn-remove" title="Deregister machine">&times;</button>`;
+
+        // Handle different removal states
+        let removeBtn;
+        if (m.status === 'deregistered') {
+            removeBtn = `<span title="Pending deregistration" class="pending-icon">⏳</span>`;
+        } else if (m.status === 'uninstalled') {
+            // Uninstalled machines should not appear in list (filtered server-side)
+            // But if they do, don't show remove button
+            return '';
+        } else {
+            removeBtn = `<button onclick="window.initiateRemoval('${m.client_id}')" class="btn-remove" title="Deregister machine">&times;</button>`;
+        }
 
         return `
             <tr data-client-id="${escapeHtml(m.client_id)}" style="${m.status === 'deregistered' ? 'opacity: 0.6;' : ''}">
@@ -305,6 +313,14 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // ... existing code ...
+
+    // Removal initiation function
+    window.initiateRemoval = function (clientId) {
+        clientToDelete = clientId;
+        removalMachineId.textContent = clientId;
+        removalModal.style.display = 'block';
+        modalBackdrop.style.display = 'block';
+    };
 
     async function handleConfirmRemoval() {
         if (!clientToDelete) return;
@@ -352,16 +368,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
 
     window.showMachineDetails = function (clientId) {
-        // Parallel fetch for details and uptime history
-        Promise.all([
-            fetch(`/api/clients/${encodeURIComponent(clientId)}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            }).then(r => r.json()),
-            fetch(`/api/clients/${encodeURIComponent(clientId)}/uptime`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            }).then(r => r.json())
-        ])
-            .then(([clientData, uptimeData]) => {
+        fetch(`/api/clients/${encodeURIComponent(clientId)}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        })
+            .then(r => r.json())
+            .then(clientData => {
                 const client = clientData.client;
                 detailMachineId.textContent = client.client_id;
 
@@ -373,19 +384,12 @@ document.addEventListener('DOMContentLoaded', function () {
                     <div class="info-item"><strong>Integrity</strong> ${client.integrity_change_count} changes</div>
                     <div class="info-item"><strong>Root Hash</strong> <code class="hash-code">${client.current_root_hash || 'N/A'}</code></div>
                 </div>
-                <div class="chart-container" style="position: relative; height: 200px; width: 100%;">
-                    <canvas id="uptimeChart"></canvas>
-                </div>
             `;
 
                 machineInfo.style.display = 'block';
                 modalBackdrop.style.display = 'block';
 
                 viewLogsBtn.onclick = () => window.location.href = `/machine/${encodeURIComponent(client.client_id)}`;
-                reviewBtn.setAttribute('data-client-id', client.client_id);
-
-                // Render Chart
-                renderUptimeChart(uptimeData.intervals);
             })
             .catch(err => alert(err.message));
     };

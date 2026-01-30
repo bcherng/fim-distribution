@@ -321,8 +321,11 @@ async function requireDaemonAuth(req, res, next) {
     const client = clientResult[0];
     if (client.status === 'deregistered') {
       return res.status(403).json({
-        error: 'Client is deregistered',
-        status: 'deregistered' // Specific signal for client to uninstall/stop
+        error: 'This machine has been deregistered by an administrator',
+        status: 'deregistered',
+        message: 'Your machine has been removed from monitoring. You can either:\n1. Reregister this machine (requires admin credentials)\n2. Uninstall the FIM client completely',
+        action_required: 'reregister_or_uninstall',
+        deregistered_at: client.last_seen
       });
     }
 
@@ -539,6 +542,115 @@ app.post('/api/auth/verify-admin', async (req, res) => {
     });
   } catch (error) {
     console.error('Admin verification error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Client reregistration endpoint
+app.post('/api/clients/reregister', async (req, res) => {
+  try {
+    const { client_id, username, password } = req.body;
+
+    // Verify admin credentials
+    const adminResult = await sql`SELECT * FROM admins WHERE username = ${username}`;
+    const admin = adminResult[0];
+    if (!admin || !(await bcrypt.compare(password, admin.password_hash))) {
+      return res.status(401).json({ error: 'Invalid admin credentials' });
+    }
+
+    // Check if client exists and is deregistered
+    const clientResult = await sql`SELECT * FROM clients WHERE client_id = ${client_id}`;
+    if (clientResult.length === 0) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+
+    const client = clientResult[0];
+    if (client.status !== 'deregistered') {
+      return res.status(400).json({ error: 'Client is not in deregistered state' });
+    }
+
+    // Reregister: clear deregistered status
+    await sql`
+      UPDATE clients 
+      SET status = 'online',
+          last_seen = CURRENT_TIMESTAMP
+      WHERE client_id = ${client_id}
+    `;
+
+    // Log reinstall event
+    await sql`
+      INSERT INTO events (
+        client_id, event_type, file_path, timestamp, reviewed
+      ) VALUES (
+        ${client_id}, 'reinstall', NULL, CURRENT_TIMESTAMP, true
+      )
+    `;
+
+    console.log(`Client reregistered: ${client_id} by admin: ${username}`);
+    broadcastUpdate(client_id, 'client_reregistered');
+
+    // Generate new daemon token
+    const payload = {
+      client_id: client_id,
+      hardware_id: JSON.parse(client.hardware_info || '{}').machine_id || client.client_id,
+      type: 'daemon',
+      iat: Math.floor(Date.now() / 1000)
+    };
+
+    const daemonToken = jwt.sign(payload, DAEMON_JWT_SECRET, {
+      expiresIn: '30d'
+    });
+
+    res.json({
+      status: 'success',
+      message: 'Client reregistered successfully',
+      token: daemonToken,
+      expires_in: 30 * 24 * 60 * 60
+    });
+  } catch (error) {
+    console.error('Error reregistering client:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Client uninstall notification endpoint
+app.post('/api/clients/uninstall', async (req, res) => {
+  try {
+    const { client_id, username, password } = req.body;
+
+    // Verify admin credentials
+    const adminResult = await sql`SELECT * FROM admins WHERE username = ${username}`;
+    const admin = adminResult[0];
+    if (!admin || !(await bcrypt.compare(password, admin.password_hash))) {
+      return res.status(401).json({ error: 'Invalid admin credentials' });
+    }
+
+    // Mark as uninstalled (preserves all logs)
+    await sql`
+      UPDATE clients 
+      SET status = 'uninstalled',
+          last_seen = CURRENT_TIMESTAMP
+      WHERE client_id = ${client_id}
+    `;
+
+    // Log uninstall event
+    await sql`
+      INSERT INTO events (
+        client_id, event_type, file_path, timestamp, reviewed
+      ) VALUES (
+        ${client_id}, 'uninstall', NULL, CURRENT_TIMESTAMP, true
+      )
+    `;
+
+    console.log(`Client uninstalled: ${client_id} by admin: ${username}`);
+    broadcastUpdate(client_id, 'client_uninstalled');
+
+    res.json({
+      status: 'success',
+      message: 'Uninstall recorded. Logs preserved.'
+    });
+  } catch (error) {
+    console.error('Error recording uninstall:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -961,7 +1073,7 @@ app.get('/api/clients', requireAdminAuth, async (req, res) => {
         MAX(e.timestamp) as last_event
       FROM clients c
       LEFT JOIN events e ON c.client_id = e.client_id
-      WHERE c.status != 'deregistered' -- Hide deregistered clients from dashboard list
+      WHERE c.status != 'deregistered' AND c.status != 'uninstalled' -- Hide deregistered and uninstalled clients from dashboard list
       GROUP BY c.client_id
       ORDER BY c.last_seen DESC
     `;

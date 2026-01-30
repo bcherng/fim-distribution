@@ -9,7 +9,8 @@
 
 <body>
   <div class="container">
-    <header style="display: flex; justify-content: space-between; align-items: center; text-align: left; padding-bottom: 10px; margin-bottom: 20px;">
+    <header
+      style="display: flex; justify-content: space-between; align-items: center; text-align: left; padding-bottom: 10px; margin-bottom: 20px;">
       <h1>FIM Dashboard</h1>
       <div class="user-info" style="margin-bottom: 0;">
         <span id="liveStatus" class="live-badge status-red">Disconnected</span>
@@ -20,8 +21,8 @@
     </header>
 
     <div class="search-container">
-        <i class="search-icon">🔍</i> <!-- Simple unicode icon or use SVG -->
-        <input type="text" id="searchInput" class="search-input" placeholder="Search machines by ID or status...">
+      <i class="search-icon">🔍</i> <!-- Simple unicode icon or use SVG -->
+      <input type="text" id="searchInput" class="search-input" placeholder="Search machines by ID or status...">
     </div>
 
     <main>
@@ -64,7 +65,6 @@
         </div>
         <div class="modal-footer">
           <button id="viewLogsBtn" class="btn btn-primary">View Event Logs</button>
-          <button id="reviewBtn" class="btn btn-success">Mark as Reviewed</button>
         </div>
       </section>
 
@@ -94,7 +94,7 @@
   </div>
 
   <footer class="sticky-footer">
-      <button onclick="window.location.href='/'" class="btn btn-secondary">Back to Home</button>
+    <button onclick="window.location.href='/'" class="btn btn-secondary">Back to Home</button>
   </footer>
 
   <script src="https://js.pusher.com/8.3.0/pusher.min.js"></script>
