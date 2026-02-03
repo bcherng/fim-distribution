@@ -190,76 +190,92 @@ document.addEventListener('DOMContentLoaded', function () {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await res.json();
-            const intervals = data.intervals || [];
+            const events = data.events || [];
 
-            render24hGraph(intervals, currentGraphDate);
+            render24hGraph(events, currentGraphDate);
         } catch (err) {
             graphContainer.innerHTML = `<p class="error">Error: ${err.message}</p>`;
         }
     }
 
-    function render24hGraph(intervals, targetDate) {
+    function render24hGraph(events, targetDate) {
         graphContainer.innerHTML = '';
 
         // Define day boundaries in local time
         const dayStart = new Date(targetDate);
         dayStart.setHours(0, 0, 0, 0);
-        const dayEnd = new Date(targetDate);
-        dayEnd.setHours(23, 59, 59, 999);
-
-        // If it's today, "now" is the limit, otherwise dayEnd is the limit
-        const today = new Date();
-        const isToday = dayStart.toDateString() === today.toDateString();
-        const limit = isToday ? today : dayEnd;
 
         const track = document.createElement('div');
         track.className = 'timeline-track';
         track.style.position = 'relative';
         track.style.height = '40px';
-        track.style.background = '#e9ecef';
+        track.style.background = '#f1f2f6';
         track.style.borderRadius = '4px';
         track.style.overflow = 'hidden';
-        track.title = 'No Data';
+        track.style.display = 'flex';
 
-        if (intervals.length === 0) {
-            track.innerHTML = '<div style="text-align: center; color: #95a5a6; padding-top: 10px;">No activity recorded for this date.</div>';
+        if (events.length === 0) {
+            track.innerHTML = '<div style="text-align: center; width: 100%; color: #95a5a6; padding-top: 10px;">No activity recorded for this date.</div>';
+            graphContainer.appendChild(track);
+            return;
         }
 
-        intervals.forEach(inv => {
-            const invStart = new Date(inv.start);
-            const invEnd = inv.end ? new Date(inv.end) : today; // Open intervals go to 'now'
+        // Divide day into 96 slots (15 mins each)
+        const SLOT_COUNT = 96;
+        const SLOT_MS = 15 * 60 * 1000;
 
-            // Clip to day boundaries
-            const drawStart = invStart < dayStart ? dayStart : invStart;
-            const drawEnd = invEnd > limit ? limit : invEnd;
+        for (let i = 0; i < SLOT_COUNT; i++) {
+            const slotStart = new Date(dayStart.getTime() + i * SLOT_MS);
+            const slotEnd = new Date(slotStart.getTime() + SLOT_MS);
 
-            if (drawEnd <= drawStart) return;
-
-            const totalMs = 24 * 60 * 60 * 1000;
-            const startOffsetMs = drawStart - dayStart;
-            const durationMs = drawEnd - drawStart;
-
-            const leftPct = (startOffsetMs / totalMs) * 100;
-            const widthPct = (durationMs / totalMs) * 100;
+            // Collect events in this slot
+            const slotEvents = events.filter(e => {
+                const t = new Date(e.timestamp);
+                return t >= slotStart && t < slotEnd;
+            });
 
             const block = document.createElement('div');
-            let blockClass = 'block-up';
-            let color = '#2ecc71';
-            if (inv.state === 'DOWN') { blockClass = 'block-down'; color = '#e74c3c'; }
-            else if (inv.state === 'SUSPECT') { blockClass = 'block-suspect'; color = '#f1c40f'; }
-
-            block.className = `timeline-block ${blockClass}`;
-            block.style.position = 'absolute';
-            block.style.left = `${leftPct}%`;
-            block.style.width = `${widthPct}%`;
+            block.style.flex = '1';
             block.style.height = '100%';
-            block.style.background = color;
-            block.title = `${inv.state}: ${invStart.toLocaleTimeString()} - ${inv.end ? new Date(inv.end).toLocaleTimeString() : 'Current'}`;
+            block.style.borderRight = '1px solid rgba(255,255,255,0.1)';
+
+            if (slotEvents.length > 0) {
+                // Determine types
+                const types = new Set(slotEvents.map(e => {
+                    if (['created', 'modified', 'deleted', 'directory_created', 'directory_modified', 'directory_deleted', 'directory_monitored_changed'].includes(e.event_type)) return 'INTEGRITY';
+                    if (e.event_type === 'heartbeat') return 'UP';
+                    if (e.event_type === 'heartbeat_missed') return 'DOWN';
+                    if (e.event_type === 'attestation_failed') return 'SUSPECT';
+                    return 'OTHER';
+                }));
+
+                // Color Logic
+                let color = '#dfe4ea'; // default
+                if (types.size > 1) {
+                    color = '#2f3542'; // Conflict: Black
+                } else {
+                    const type = Array.from(types)[0];
+                    if (type === 'UP') color = '#2ecc71'; // Green
+                    else if (type === 'DOWN') color = '#e74c3c'; // Red
+                    else if (type === 'SUSPECT') color = '#f1c40f'; // Yellow
+                    else if (type === 'INTEGRITY') color = '#e67e22'; // Orange
+                }
+
+                block.style.background = color;
+
+                // Tooltip
+                const timeStr = `${slotStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+                const eventCount = slotEvents.length;
+                block.title = `${timeStr}: ${eventCount} event(s) - ${Array.from(types).join(', ')}`;
+            } else {
+                block.style.background = '#dfe4ea'; // Gray: No Data
+                block.title = `No activity`;
+            }
 
             track.appendChild(block);
-        });
+        }
 
-        // Add Time Labels (Every 4 hours for better precision on 24h view)
+        // Add Time Labels (Every 4 hours)
         const labels = document.createElement('div');
         labels.style.display = 'flex';
         labels.style.justifyContent = 'space-between';

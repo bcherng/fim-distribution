@@ -16,7 +16,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const DAEMON_JWT_SECRET = process.env.DAEMON_JWT_SECRET || 'daemon-secret-key-change-in-production';
-const HEARTBEAT_INTERVAL = 6 * 60 * 1000; // 6 minutes
+const HEARTBEAT_INTERVAL = 15 * 60 * 1000; // 15 minutes
 
 
 const mockData = {
@@ -209,49 +209,6 @@ async function initDatabase() {
 
 initDatabase();
 
-// Uptime Interval Helper
-// Closes current open interval for client and opens a new one
-async function transitionState(client_id, newState, timestamp = new Date()) {
-  try {
-    // 1. Find if there's an open interval for this client
-    const activeResult = await sql`
-      SELECT id, state FROM uptime_intervals 
-      WHERE client_id = ${client_id} AND "end" IS NULL
-      LIMIT 1
-    `;
-    const active = activeResult[0];
-
-    // 2. If state is the same, do nothing
-    if (active && active.state === newState) return;
-
-    // 3. If there was an active different state, close it
-    if (active) {
-      await sql`
-        UPDATE uptime_intervals 
-        SET "end" = ${timestamp}
-        WHERE id = ${active.id}
-      `;
-    }
-
-    // 4. Open new interval
-    await sql`
-      INSERT INTO uptime_intervals (client_id, start, state)
-      VALUES (${client_id}, ${timestamp}, ${newState})
-    `;
-
-    // Also update mockData for fallback/hybrid consistency if still used
-    const mockActive = mockData.intervals.find(i => i.client_id === client_id && !i.end);
-    if (mockActive) mockActive.end = timestamp.toISOString();
-    mockData.intervals.push({
-      client_id,
-      start: timestamp.toISOString(),
-      end: null,
-      state: newState
-    });
-  } catch (error) {
-    console.error('Error transitioning state:', error);
-  }
-}
 
 // Heartbeat checker - Timeouts
 async function checkHeartbeats() {
@@ -262,35 +219,40 @@ async function checkHeartbeats() {
     const clients = await sql`SELECT client_id, status, last_seen, last_reviewed_at FROM clients WHERE status != 'deregistered'`;
 
     for (const client of clients) {
-      const lastSeen = new Date(client.last_seen || client.last_reviewed_at);
+      const lastSeen = new Date(client.last_seen || client.last_reviewed_at || 0);
       const diffSeconds = (now - lastSeen) / 1000;
-      const interval = 900; // 15 mins default
+      const intervalSeconds = 900; // 15 mins
 
-      // Logic: UP -> SUSPECT (> 1.5x interval)
-      if (client.status === 'online' && diffSeconds > (interval * 1.5)) {
-        console.log(`[Watchdog] Client ${client.client_id} -> SUSPECT`);
-        await sql`UPDATE clients SET status = 'warning' WHERE client_id = ${client.client_id}`;
+      // Logic: If last_seen is more than 1 interval ago, and we haven't already logged a missed heartbeat
+      if (diffSeconds > intervalSeconds) {
+        // Check last event for this client
+        const lastEvents = await sql`
+          SELECT event_type, timestamp FROM events 
+          WHERE client_id = ${client.client_id} 
+          ORDER BY timestamp DESC LIMIT 1
+        `;
+        const lastEvent = lastEvents[0];
+        const lastEventTime = lastEvent ? new Date(lastEvent.timestamp) : new Date(0);
 
-        // Sync mockData
-        const mClient = mockData.clients.get(client.client_id);
-        if (mClient) mClient.status = 'warning';
+        // Only insert if last event wasn't already a missed heartbeat AFTER the last success
+        if (!lastEvent || (lastEvent.event_type !== 'heartbeat_missed' && lastEventTime <= lastSeen)) {
+          console.log(`[Watchdog] Client ${client.client_id} -> MISSED HEARTBEAT`);
 
-        await transitionState(client.client_id, 'SUSPECT', now);
-      }
-      // Logic: SUSPECT -> DOWN (> 3.0x interval)
-      else if (client.status === 'warning' && diffSeconds > (interval * 3.0)) {
-        console.log(`[Watchdog] Client ${client.client_id} -> DOWN`);
-        await sql`UPDATE clients SET status = 'offline' WHERE client_id = ${client.client_id}`;
+          await sql`
+            INSERT INTO events (client_id, event_type, timestamp, reviewed, acknowledged)
+            VALUES (${client.client_id}, 'heartbeat_missed', ${now}, true, true)
+          `;
 
-        // Sync mockData
-        const mClient = mockData.clients.get(client.client_id);
-        if (mClient) mClient.status = 'offline';
+          await sql`UPDATE clients SET status = 'offline' WHERE client_id = ${client.client_id}`;
 
-        await transitionState(client.client_id, 'DOWN', now);
+          // Sync mockData
+          const mClient = mockData.clients.get(client.client_id);
+          if (mClient) mClient.status = 'offline';
+
+          broadcastUpdate(client.client_id, 'client_updated');
+        }
       }
     }
-
-    broadcastUpdate('__all__', 'clients_timed_out');
   } catch (error) {
     console.error('Heartbeat check error:', error);
   }
@@ -707,13 +669,25 @@ app.post('/api/clients/heartbeat', requireDaemonAuth, async (req, res) => {
         console.log(`[Heartbeat] Boot ID changed for ${client_id}. Restart detected.`);
       }
 
-      if (shouldTransition) {
-        await transitionState(client_id, 'UP', now);
-      } else {
-        // Ensure we have an open UP interval if none exists in SQL
-        const activeResult = await sql`SELECT id FROM uptime_intervals WHERE client_id = ${client_id} AND "end" IS NULL LIMIT 1`;
-        if (activeResult.length === 0) await transitionState(client_id, 'UP', now);
-      }
+
+      // Update client status and last seen in DB
+      await sql`
+        UPDATE clients 
+        SET last_seen = ${now}, 
+            status = 'online',
+            last_reviewed_at = ${now},
+            last_heartbeat = ${now},
+            file_count = ${file_count || 0},
+            last_boot_id = ${boot_id || null},
+            current_root_hash = ${current_root_hash || null}
+        WHERE client_id = ${client_id}
+      `;
+
+      // Log heartbeat event
+      await sql`
+        INSERT INTO events (client_id, event_type, timestamp, reviewed, acknowledged)
+        VALUES (${client_id}, 'heartbeat', ${now}, true, true)
+      `;
 
       client.last_boot_id = boot_id;
       client.status = 'online'; // Received heartbeat -> Online
@@ -722,16 +696,6 @@ app.post('/api/clients/heartbeat', requireDaemonAuth, async (req, res) => {
       console.log(`[Heartbeat] Updated last_seen for ${client_id} to ${client.last_seen}`);
     }
 
-    // Still perform SQL update for persistence
-    await sql`
-      UPDATE clients 
-      SET last_seen = CURRENT_TIMESTAMP, 
-          status = 'online',
-          file_count = ${file_count || 0},
-          last_boot_id = ${boot_id || null},
-          current_root_hash = ${current_root_hash || null}
-      WHERE client_id = ${client_id}
-    `;
 
     res.json({
       status: 'success',
@@ -856,12 +820,6 @@ app.post('/api/events/report', requireDaemonAuth, async (req, res) => {
       memClient.last_seen = new Date().toISOString();
       memClient.missed_heartbeat_count = 0;
       memClient.status = 'online';
-      // Ensure interval is UP
-      const activeResult = await sql`SELECT id, state FROM uptime_intervals WHERE client_id = ${client_id} AND "end" IS NULL LIMIT 1`;
-      const active = activeResult[0];
-      if (!active || active.state !== 'UP') {
-        await transitionState(client_id, 'UP', new Date());
-      }
     }
 
     const validation = {
@@ -1048,18 +1006,17 @@ app.get('/api/clients/:id/uptime', requireAdminAuth, async (req, res) => {
       targetDateEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     }
 
-    // Query for intervals that overlap with the target day
-    // An interval overlaps if: start < targetEnd AND (end IS NULL OR end > targetStart)
-    const intervals = await sql`
-      SELECT id, client_id, start, "end", state 
-      FROM uptime_intervals 
+    // Query for events on the target day
+    const events = await sql`
+      SELECT id, event_type, timestamp, file_path, old_hash, new_hash, reviewed
+      FROM events 
       WHERE client_id = ${client_id} 
-        AND start < ${targetDateEnd} 
-        AND ("end" IS NULL OR "end" > ${targetDateStart})
-      ORDER BY start ASC
+        AND timestamp >= ${targetDateStart} 
+        AND timestamp <= ${targetDateEnd}
+      ORDER BY timestamp ASC
     `;
 
-    res.json({ client_id, date: date || targetDateStart.toISOString().split('T')[0], intervals });
+    res.json({ client_id, date: date || targetDateStart.toISOString().split('T')[0], events });
   } catch (error) {
     console.error('Error fetching uptime:', error);
     res.status(500).json({ error: 'Internal server error' });
