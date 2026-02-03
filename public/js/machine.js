@@ -32,9 +32,61 @@ document.addEventListener('DOMContentLoaded', function () {
             // Reload data for the view
             if (btn.dataset.tab === 'approval') loadApprovalQueue();
             if (btn.dataset.tab === 'log') loadFullLogs();
-            if (btn.dataset.tab === 'graph') loadGraph();
+            if (btn.dataset.tab === 'graph') {
+                if (!currentGraphDate) {
+                    currentGraphDate = new Date();
+                    updateDatePicker();
+                }
+                loadGraph();
+            }
         });
     });
+
+    // -------- GRAPH MODE (Date Selection) --------
+    let currentGraphDate = null;
+    const datePicker = document.getElementById('graphDatePicker');
+    const prevDayBtn = document.getElementById('prevDayBtn');
+    const nextDayBtn = document.getElementById('nextDayBtn');
+    const todayBtn = document.getElementById('todayBtn');
+
+    function updateDatePicker() {
+        if (!datePicker) return;
+        const yyyy = currentGraphDate.getFullYear();
+        const mm = String(currentGraphDate.getMonth() + 1).padStart(2, '0');
+        const dd = String(currentGraphDate.getDate()).padStart(2, '0');
+        datePicker.value = `${yyyy}-${mm}-${dd}`;
+    }
+
+    if (datePicker) {
+        datePicker.addEventListener('change', (e) => {
+            currentGraphDate = new Date(e.target.value + 'T00:00:00');
+            loadGraph();
+        });
+    }
+
+    if (prevDayBtn) {
+        prevDayBtn.addEventListener('click', () => {
+            currentGraphDate.setDate(currentGraphDate.getDate() - 1);
+            updateDatePicker();
+            loadGraph();
+        });
+    }
+
+    if (nextDayBtn) {
+        nextDayBtn.addEventListener('click', () => {
+            currentGraphDate.setDate(currentGraphDate.getDate() + 1);
+            updateDatePicker();
+            loadGraph();
+        });
+    }
+
+    if (todayBtn) {
+        todayBtn.addEventListener('click', () => {
+            currentGraphDate = new Date();
+            updateDatePicker();
+            loadGraph();
+        });
+    }
 
     // -------- APPROVAL MODE --------
     async function loadApprovalQueue() {
@@ -130,77 +182,95 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // -------- GRAPH MODE (24h) --------
     async function loadGraph() {
-        graphContainer.innerHTML = 'Loading graph...';
+        if (!graphContainer) return;
+        graphContainer.innerHTML = '<div class="loading">Loading graph...</div>';
         try {
-            // Reuse uptime endpoint? It gives 7 days. We can just use the intervals from today/yesterday.
-            const res = await fetch(`/api/clients/${encodeURIComponent(clientId)}/uptime`, {
+            const dateStr = datePicker.value;
+            const res = await fetch(`/api/clients/${encodeURIComponent(clientId)}/uptime?date=${dateStr}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await res.json();
             const intervals = data.intervals || [];
 
-            render24hGraph(intervals);
+            render24hGraph(intervals, currentGraphDate);
         } catch (err) {
-            graphContainer.innerHTML = `Error: ${err.message}`;
+            graphContainer.innerHTML = `<p class="error">Error: ${err.message}</p>`;
         }
     }
 
-    function render24hGraph(intervals) {
+    function render24hGraph(intervals, targetDate) {
         graphContainer.innerHTML = '';
-        const now = new Date();
-        const start24 = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+        // Define day boundaries in local time
+        const dayStart = new Date(targetDate);
+        dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(targetDate);
+        dayEnd.setHours(23, 59, 59, 999);
+
+        // If it's today, "now" is the limit, otherwise dayEnd is the limit
+        const today = new Date();
+        const isToday = dayStart.toDateString() === today.toDateString();
+        const limit = isToday ? today : dayEnd;
 
         const track = document.createElement('div');
         track.className = 'timeline-track';
+        track.style.position = 'relative';
         track.style.height = '40px';
-        track.style.background = '#e0e0e0';
+        track.style.background = '#e9ecef';
+        track.style.borderRadius = '4px';
+        track.style.overflow = 'hidden';
         track.title = 'No Data';
+
+        if (intervals.length === 0) {
+            track.innerHTML = '<div style="text-align: center; color: #95a5a6; padding-top: 10px;">No activity recorded for this date.</div>';
+        }
 
         intervals.forEach(inv => {
             const invStart = new Date(inv.start);
-            const invEnd = inv.end ? new Date(inv.end) : new Date();
+            const invEnd = inv.end ? new Date(inv.end) : today; // Open intervals go to 'now'
 
-            // Check overlap with last 24h
-            if (invEnd < start24 || invStart > now) return;
+            // Clip to day boundaries
+            const drawStart = invStart < dayStart ? dayStart : invStart;
+            const drawEnd = invEnd > limit ? limit : invEnd;
 
-            // Clip
-            const drawStart = invStart < start24 ? start24 : invStart;
-            const drawEnd = invEnd > now ? now : invEnd;
+            if (drawEnd <= drawStart) return;
 
             const totalMs = 24 * 60 * 60 * 1000;
-            const startMs = drawStart - start24;
+            const startOffsetMs = drawStart - dayStart;
             const durationMs = drawEnd - drawStart;
 
-            if (durationMs <= 0) return;
-
-            const leftPct = (startMs / totalMs) * 100;
+            const leftPct = (startOffsetMs / totalMs) * 100;
             const widthPct = (durationMs / totalMs) * 100;
 
             const block = document.createElement('div');
             let blockClass = 'block-up';
-            if (inv.state === 'DOWN') blockClass = 'block-down';
-            else if (inv.state === 'SUSPECT') blockClass = 'block-suspect';
+            let color = '#2ecc71';
+            if (inv.state === 'DOWN') { blockClass = 'block-down'; color = '#e74c3c'; }
+            else if (inv.state === 'SUSPECT') { blockClass = 'block-suspect'; color = '#f1c40f'; }
 
             block.className = `timeline-block ${blockClass}`;
+            block.style.position = 'absolute';
             block.style.left = `${leftPct}%`;
             block.style.width = `${widthPct}%`;
-            block.title = `${inv.state}: ${drawStart.toLocaleTimeString()} - ${drawEnd.toLocaleTimeString()}`;
+            block.style.height = '100%';
+            block.style.background = color;
+            block.title = `${inv.state}: ${invStart.toLocaleTimeString()} - ${inv.end ? new Date(inv.end).toLocaleTimeString() : 'Current'}`;
 
             track.appendChild(block);
         });
 
-        // Add Time Labels (Every 6 hours)
+        // Add Time Labels (Every 4 hours for better precision on 24h view)
         const labels = document.createElement('div');
         labels.style.display = 'flex';
         labels.style.justifyContent = 'space-between';
-        labels.style.marginTop = '5px';
-        labels.style.fontSize = '0.8rem';
+        labels.style.marginTop = '10px';
+        labels.style.fontSize = '0.75rem';
         labels.style.color = '#7f8c8d';
 
-        for (let i = 0; i <= 4; i++) {
-            const t = new Date(start24.getTime() + (i * 6 * 60 * 60 * 1000));
+        for (let i = 0; i <= 6; i++) {
+            const t = new Date(dayStart.getTime() + (i * 4 * 60 * 60 * 1000));
             const span = document.createElement('span');
-            span.textContent = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            span.textContent = i === 6 ? '23:59' : t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
             labels.appendChild(span);
         }
 

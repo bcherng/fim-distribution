@@ -128,7 +128,16 @@
 
       <!-- Graph Mode -->
       <div id="graphView" class="view-section">
-        <h3>24-Hour Activity</h3>
+        <div class="graph-controls"
+          style="display: flex; align-items: center; gap: 15px; margin-bottom: 20px; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+          <h3 style="margin: 0;">Activity Log</h3>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <button id="prevDayBtn" class="btn btn-secondary" style="padding: 5px 10px;">&larr;</button>
+            <input type="date" id="graphDatePicker" style="padding: 5px; border: 1px solid #ddd; border-radius: 4px;">
+            <button id="nextDayBtn" class="btn btn-secondary" style="padding: 5px 10px;">&rarr;</button>
+          </div>
+          <button id="todayBtn" class="btn btn-secondary" style="padding: 5px 10px;">Today</button>
+        </div>
         <div id="graphContainer" class="timeline-container">
           <!-- Graph rendered here -->
           <p>Loading graph...</p>
