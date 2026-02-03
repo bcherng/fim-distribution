@@ -24,8 +24,7 @@ const mockData = {
   admins: new Map(),
   events: [],
   sessions: new Map(),
-  baselines: [],
-  intervals: [] // { client_id, start, end, state: 'UP'|'SUSPECT'|'DOWN' }
+  baselines: []
 };
 
 const pusher = (process.env.PUSHER_APP_ID && process.env.PUSHER_KEY && process.env.PUSHER_SECRET && process.env.PUSHER_CLUSTER)
