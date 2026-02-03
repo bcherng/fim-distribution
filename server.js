@@ -41,11 +41,15 @@ if (!pusher) {
   console.warn('Pusher environment variables missing. Real-time updates will be disabled.');
 }
 
-function broadcastUpdate(clientId, type = 'client_updated') {
+async function broadcastUpdate(clientId, type = 'client_updated') {
   if (!pusher) return;
   const message = { type, clientId, timestamp: new Date().toISOString() };
-  console.log(`[Pusher] Triggering update on channel 'fim-updates':`, message);
-  pusher.trigger('fim-updates', 'client_updated', message);
+  try {
+    console.log(`[Pusher] Triggering update on channel 'fim-updates':`, message);
+    await pusher.trigger('fim-updates', 'client_updated', message);
+  } catch (error) {
+    console.error(`[Pusher] Error triggering update:`, error.message);
+  }
 }
 
 // Initialize admin mock data
