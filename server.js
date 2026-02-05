@@ -1175,10 +1175,9 @@ app.get('/api/clients', requireAdminAuth, async (req, res) => {
   try {
     const result = await sql`
       SELECT 
-        c.client_id, c.hostname, c.ip_address, c.os, c.os_version, c.status, 
-        c.last_seen, 
-        COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'attestation_failed' THEN 1 END) = 0 as attestation_valid,
+        c.client_id, c.status, c.last_seen, 
         c.integrity_status, c.current_root_hash, c.last_reviewed_at,
+        c.attestation_valid,
         COUNT(CASE WHEN e.reviewed = false AND e.event_type NOT IN ('heartbeat', 'heartbeat_missed', 'directory_selected', 'directory_unselected', 'registration', 'deregistration', 'reinstall', 'uninstall', 'attestation_failed') THEN 1 END) as integrity_change_count,
         COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'heartbeat_missed' THEN 1 END) as missed_heartbeat_count,
         COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'attestation_failed' THEN 1 END) as attestation_error_count,
@@ -1187,7 +1186,7 @@ app.get('/api/clients', requireAdminAuth, async (req, res) => {
       FROM clients c
       LEFT JOIN events e ON c.client_id = e.client_id
       WHERE c.status != 'uninstalled' 
-      GROUP BY c.client_id, c.hostname, c.ip_address, c.os, c.os_version, c.status, c.last_seen, c.attestation_valid, c.integrity_status, c.current_root_hash, c.last_reviewed_at
+      GROUP BY c.client_id, c.status, c.last_seen, c.integrity_status, c.current_root_hash, c.last_reviewed_at, c.attestation_valid
       ORDER BY c.last_seen DESC
     `;
 
