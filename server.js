@@ -577,9 +577,13 @@ app.post('/api/clients/reregister', async (req, res) => {
     broadcastUpdate(client_id, 'client_reregistered');
 
     // Generate new daemon token
+    const hardwareInfo = typeof client.hardware_info === 'string'
+      ? JSON.parse(client.hardware_info)
+      : (client.hardware_info || {});
+
     const payload = {
       client_id: client_id,
-      hardware_id: JSON.parse(client.hardware_info || '{}').machine_id || client.client_id,
+      hardware_id: hardwareInfo.machine_id || hardwareInfo.hostname || client_id,
       type: 'daemon',
       iat: Math.floor(Date.now() / 1000)
     };
