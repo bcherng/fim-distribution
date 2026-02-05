@@ -274,7 +274,7 @@ document.addEventListener('DOMContentLoaded', function () {
         // Handle different removal states
         let removeBtn;
         if (m.status === 'deregistered') {
-            removeBtn = `<span title="Pending deregistration" class="pending-icon">⏳</span>`;
+            removeBtn = `<span title="Pending deregistration" class="pending-icon" style="font-size: 1.2rem; cursor: help; margin-right: 15px;">⏳</span>`;
         } else if (m.status === 'uninstalled') {
             // Uninstalled machines should not appear in list (filtered server-side)
             // But if they do, don't show remove button

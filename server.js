@@ -1175,13 +1175,19 @@ app.get('/api/clients', requireAdminAuth, async (req, res) => {
   try {
     const result = await sql`
       SELECT 
-        c.*,
+        c.client_id, c.hostname, c.ip_address, c.os, c.os_version, c.status, 
+        c.last_seen, 
+        COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'attestation_failed' THEN 1 END) = 0 as attestation_valid,
+        c.integrity_status, c.current_root_hash, c.last_reviewed_at,
+        COUNT(CASE WHEN e.reviewed = false AND e.event_type NOT IN ('heartbeat', 'heartbeat_missed', 'directory_selected', 'directory_unselected', 'registration', 'deregistration', 'reinstall', 'uninstall', 'attestation_failed') THEN 1 END) as integrity_change_count,
+        COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'heartbeat_missed' THEN 1 END) as missed_heartbeat_count,
+        COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'attestation_failed' THEN 1 END) as attestation_error_count,
         COUNT(CASE WHEN e.reviewed = false THEN 1 END) as unreviewed_events,
         MAX(e.timestamp) as last_event
       FROM clients c
       LEFT JOIN events e ON c.client_id = e.client_id
-      WHERE c.status != 'deregistered' AND c.status != 'uninstalled' -- Hide deregistered and uninstalled clients from dashboard list
-      GROUP BY c.client_id
+      WHERE c.status != 'uninstalled' 
+      GROUP BY c.client_id, c.hostname, c.ip_address, c.os, c.os_version, c.status, c.last_seen, c.attestation_valid, c.integrity_status, c.current_root_hash, c.last_reviewed_at
       ORDER BY c.last_seen DESC
     `;
 
@@ -1299,37 +1305,6 @@ async function updateUptimeState(clientId, newState, time) {
   }
 }
 
-// Reset counters for a client
-app.post('/api/clients/:client_id/review', requireAdminAuth, async (req, res) => {
-  try {
-    const { client_id } = req.params;
-
-    // 1. Mark all pending events as reviewed
-    await sql`
-      UPDATE events 
-      SET reviewed = true, 
-          reviewed_at = CURRENT_TIMESTAMP, 
-          reviewed_by = ${req.user.username}
-      WHERE client_id = ${client_id} AND reviewed = false
-    `;
-
-    // 2. Update client last_reviewed_at and reset counts in the table (as a fallback)
-    await sql`
-      UPDATE clients 
-      SET last_reviewed_at = CURRENT_TIMESTAMP,
-          integrity_change_count = 0,
-          attestation_error_count = 0
-      WHERE client_id = ${client_id}
-    `;
-
-    res.json({ status: 'success', message: 'Client review completed' });
-    broadcastUpdate(client_id, 'client_reviewed');
-  } catch (error) {
-    console.error('Error reviewing client:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
 app.get('/api/clients/:client_id/events', requireAdminAuth, async (req, res) => {
   try {
     const { client_id } = req.params;
@@ -1393,8 +1368,12 @@ app.post('/api/events/:id/review', requireAdminAuth, async (req, res) => {
     `;
 
     if (result.length > 0) {
-      // If all events for this client are reviewed, set integrity to clean
       const client_id = result[0].client_id;
+
+      // Update last_reviewed_at so "since last review" stats remain current
+      await sql`UPDATE clients SET last_reviewed_at = CURRENT_TIMESTAMP WHERE client_id = ${client_id}`;
+
+      // Check if all events are now clean
       const pending = await sql`SELECT count(*) as count FROM events WHERE client_id = ${client_id} AND reviewed = false`;
 
       if (parseInt(pending[0].count) === 0) {
@@ -1405,32 +1384,6 @@ app.post('/api/events/:id/review', requireAdminAuth, async (req, res) => {
     res.json({ status: 'success', message: 'Event reviewed' });
   } catch (error) {
     console.error('Error reviewing event:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-app.post('/api/clients/:client_id/review-events', requireAdminAuth, async (req, res) => {
-  try {
-    const { client_id } = req.params;
-
-    await sql`
-      UPDATE events 
-      SET reviewed = true, reviewed_at = CURRENT_TIMESTAMP, reviewed_by = ${req.user.username}
-      WHERE client_id = ${client_id} AND reviewed = false
-    `;
-
-    await sql`
-      UPDATE clients 
-      SET integrity_status = 'clean'
-      WHERE client_id = ${client_id}
-    `;
-
-    res.json({
-      status: 'success',
-      message: 'Events reviewed'
-    });
-  } catch (error) {
-    console.error('Error reviewing events:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1473,6 +1426,82 @@ app.delete('/api/clients/:client_id', requireAdminAuth, async (req, res) => {
     broadcastUpdate(client_id, 'client_removed');
   } catch (error) {
     console.error('Error deleting client:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Re-register a machine
+app.post('/api/clients/reregister', async (req, res) => {
+  try {
+    const { client_id, username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Admin credentials required' });
+    }
+
+    // Verify admin password
+    const adminResult = await sql`SELECT * FROM admins WHERE username = ${username}`;
+    const admin = adminResult[0];
+    if (!admin || !(await bcrypt.compare(password, admin.password_hash))) {
+      return res.status(401).json({ error: 'Invalid admin credentials' });
+    }
+
+    // Update status to online
+    await sql`
+      UPDATE clients 
+      SET status = 'online', last_seen = CURRENT_TIMESTAMP 
+      WHERE client_id = ${client_id}
+    `;
+
+    // Log re-registration event
+    await sql`
+      INSERT INTO events (client_id, event_type, file_path, timestamp, reviewed)
+      VALUES (${client_id}, 'registration', 'N/A', CURRENT_TIMESTAMP, true)
+    `;
+
+    // Generate new token
+    const token = jwt.sign({ client_id, role: 'daemon' }, JWT_SECRET, { expiresIn: '30d' });
+
+    res.json({
+      status: 'success',
+      token,
+      expires_in: 30 * 24 * 60 * 60
+    });
+
+    broadcastUpdate(client_id, 'client_reregistered');
+  } catch (error) {
+    console.error('Error reregistering client:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Notify server of uninstall
+app.post('/api/clients/uninstall', async (req, res) => {
+  try {
+    const { client_id, username, password } = req.body;
+
+    // Verify admin credentials
+    const adminResult = await sql`SELECT * FROM admins WHERE username = ${username}`;
+    const admin = adminResult[0];
+    if (!admin || !(await bcrypt.compare(password, admin.password_hash))) {
+      return res.status(401).json({ error: 'Invalid admin credentials' });
+    }
+
+    await sql`
+      UPDATE clients 
+      SET status = 'uninstalled', last_seen = CURRENT_TIMESTAMP 
+      WHERE client_id = ${client_id}
+    `;
+
+    await sql`
+      INSERT INTO events (client_id, event_type, file_path, timestamp, reviewed)
+      VALUES (${client_id}, 'uninstall', 'N/A', CURRENT_TIMESTAMP, true)
+    `;
+
+    res.json({ status: 'success' });
+    broadcastUpdate(client_id, 'client_uninstalled');
+  } catch (error) {
+    console.error('Error recording uninstall:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
