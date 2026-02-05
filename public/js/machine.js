@@ -190,86 +190,91 @@ document.addEventListener('DOMContentLoaded', function () {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await res.json();
-            const events = data.events || [];
 
-            render24hGraph(events, currentGraphDate);
+            render24hGraph(data, currentGraphDate);
         } catch (err) {
             graphContainer.innerHTML = `<p class="error">Error: ${err.message}</p>`;
         }
     }
 
-    function render24hGraph(events, targetDate) {
+    function render24hGraph(data, targetDate) {
+        const events = data.events || [];
+        const uptime = data.uptime || [];
         graphContainer.innerHTML = '';
 
-        // Define day boundaries in local time
         const dayStart = new Date(targetDate);
         dayStart.setHours(0, 0, 0, 0);
 
         const track = document.createElement('div');
         track.className = 'timeline-track';
-        track.style.position = 'relative';
-        track.style.height = '40px';
-        track.style.background = '#f1f2f6';
-        track.style.borderRadius = '4px';
-        track.style.overflow = 'hidden';
-        track.style.display = 'flex';
+        track.style = 'position: relative; height: 40px; background: #f1f2f6; border-radius: 4px; overflow: hidden; display: flex;';
 
-        if (events.length === 0) {
-            track.innerHTML = '<div style="text-align: center; width: 100%; color: #95a5a6; padding-top: 10px;">No activity recorded for this date.</div>';
-            graphContainer.appendChild(track);
-            return;
-        }
-
-        // Divide day into 96 slots (15 mins each)
         const SLOT_COUNT = 96;
         const SLOT_MS = 15 * 60 * 1000;
+
+        // Snapping helper: snaps a date to the nearest 15m interval relative to day start
+        function getSnappedSlotIndex(date) {
+            const t = new Date(date).getTime();
+            const diff = t - dayStart.getTime();
+            return Math.round(diff / SLOT_MS);
+        }
 
         for (let i = 0; i < SLOT_COUNT; i++) {
             const slotStart = new Date(dayStart.getTime() + i * SLOT_MS);
             const slotEnd = new Date(slotStart.getTime() + SLOT_MS);
 
-            // Collect events in this slot
+            const block = document.createElement('div');
+            block.style.flex = '1';
+            block.style.height = '100%';
+            block.style.borderRight = '1px solid rgba(255,255,255,0.1)';
+            block.style.transition = 'background 0.3s ease';
+
+            // 1. Determine base health color from uptime table
+            let state = 'NO_DATA';
+            for (const ut of uptime) {
+                const start = new Date(ut.start_time);
+                const end = ut.end_time ? new Date(ut.end_time) : new Date(); // Treat open as current
+
+                // Snap boundaries
+                const startSlot = getSnappedSlotIndex(start);
+                const endSlot = getSnappedSlotIndex(end);
+
+                if (i >= startSlot && i < endSlot) {
+                    state = ut.state;
+                    break;
+                }
+            }
+
+            let color = '#dfe4ea'; // Gray
+            if (state === 'UP') color = '#2ecc71'; // Green
+            if (state === 'DOWN') color = '#e74c3c'; // Red
+            if (state === 'SUSPECT') color = '#f1c40f'; // Yellow
+
+            block.style.background = color;
+
+            // 2. Overlay Events (Integrity, Attestation, etc.)
             const slotEvents = events.filter(e => {
                 const t = new Date(e.timestamp);
                 return t >= slotStart && t < slotEnd;
             });
 
-            const block = document.createElement('div');
-            block.style.flex = '1';
-            block.style.height = '100%';
-            block.style.borderRight = '1px solid rgba(255,255,255,0.1)';
-
             if (slotEvents.length > 0) {
-                // Determine types
-                const types = new Set(slotEvents.map(e => {
-                    if (['created', 'modified', 'deleted', 'directory_created', 'directory_modified', 'directory_deleted', 'directory_monitored_changed'].includes(e.event_type)) return 'INTEGRITY';
-                    if (e.event_type === 'heartbeat') return 'UP';
-                    if (e.event_type === 'heartbeat_missed') return 'DOWN';
-                    if (e.event_type === 'attestation_failed') return 'SUSPECT';
-                    return 'OTHER';
-                }));
+                const hasIntegrity = slotEvents.some(e => ['created', 'modified', 'deleted', 'directory_created', 'directory_modified', 'directory_deleted', 'directory_monitored_changed'].includes(e.event_type));
+                const hasAlert = slotEvents.some(e => ['attestation_failed', 'unauthorized_change'].includes(e.event_type));
 
-                // Color Logic
-                let color = '#dfe4ea'; // default
-                if (types.size > 1) {
-                    color = '#2f3542'; // Conflict: Black
-                } else {
-                    const type = Array.from(types)[0];
-                    if (type === 'UP') color = '#2ecc71'; // Green
-                    else if (type === 'DOWN') color = '#e74c3c'; // Red
-                    else if (type === 'SUSPECT') color = '#f1c40f'; // Yellow
-                    else if (type === 'INTEGRITY') color = '#e67e22'; // Orange
+                if (hasAlert) {
+                    block.style.background = '#2f3542'; // Dark Grey/Black for serious alerts
+                } else if (hasIntegrity) {
+                    // Create an orange pip
+                    const pip = document.createElement('div');
+                    pip.style = 'width: 4px; height: 4px; background: #e67e22; border-radius: 50%; margin: 2px auto;';
+                    block.appendChild(pip);
                 }
 
-                block.style.background = color;
-
-                // Tooltip
-                const timeStr = `${slotStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-                const eventCount = slotEvents.length;
-                block.title = `${timeStr}: ${eventCount} event(s) - ${Array.from(types).join(', ')}`;
+                const types = [...new Set(slotEvents.map(e => e.event_type))].join(', ');
+                block.title = `${slotStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}: ${state} - Events: ${types}`;
             } else {
-                block.style.background = '#dfe4ea'; // Gray: No Data
-                block.title = `No activity`;
+                block.title = `${slotStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}: ${state}`;
             }
 
             track.appendChild(block);

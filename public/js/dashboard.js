@@ -113,10 +113,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
             channel.bind('client_updated', (data) => {
                 console.log('[Pusher] Event received:', data);
-                if (data.clientId) {
-                    dirtyClients.add(data.clientId);
-                } else if (data.type === 'client_registered' || data.type === 'client_removed' || data.type === 'clients_timed_out') {
+                if (data.type === 'client_registered' || data.type === 'client_removed' || data.type === 'client_uninstalled' || data.type === 'client_reregistered') {
                     dirtyClients.add('__all__');
+                } else if (data.clientId) {
+                    dirtyClients.add(data.clientId);
                 }
             });
 
@@ -235,7 +235,8 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!skipCacheUpdate) machinesCache = machines;
 
         if (!machines || machines.length === 0) {
-            machineTableBody.innerHTML = '<tr><td colspan="6" class="loading">No machines found.</td></tr>';
+            machineTableBody.innerHTML = '<tr><td colspan="6" class="loading">No machines found. Monitoring is currently inactive.</td></tr>';
+            lastUpdated.textContent = 'Last updated: ' + new Date().toLocaleTimeString();
             return;
         }
         machineTableBody.innerHTML = machines.map(m => generateRowHtml(m)).join('');

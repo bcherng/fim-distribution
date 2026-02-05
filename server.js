@@ -63,8 +63,8 @@ async function initDatabase() {
     sql = neon(process.env.DATABASE_URL);
     console.log('Neon database connection initialized');
 
-    // Start heartbeat checker
-    setInterval(checkHeartbeats, HEARTBEAT_INTERVAL);
+    // Removal of setInterval for serverless compatibility
+    // setInterval(checkHeartbeats, HEARTBEAT_INTERVAL);
   } catch (error) {
     console.error('Failed to initialize Neon database:', error);
 
@@ -370,8 +370,6 @@ async function cleanupExpiredSessions() {
   }
 }
 
-setInterval(cleanupExpiredSessions, 60 * 60 * 1000);
-
 // Static pages
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -654,27 +652,11 @@ app.post('/api/clients/heartbeat', requireDaemonAuth, async (req, res) => {
     const client = mockData.clients.get(client_id);
 
     if (client) {
-      // State Transition Logic
-      let shouldTransition = false;
-
-      // 1. Recovering from bad state
-      if (client.status !== 'online') {
-        shouldTransition = true;
-      }
-
-      // 2. Boot ID Change (Restart)
-      if (boot_id && client.last_boot_id && boot_id !== client.last_boot_id) {
-        shouldTransition = true;
-        console.log(`[Heartbeat] Boot ID changed for ${client_id}. Restart detected.`);
-      }
-
-
       // Update client status and last seen in DB
       await sql`
         UPDATE clients 
         SET last_seen = ${now}, 
             status = 'online',
-            last_reviewed_at = ${now},
             last_heartbeat = ${now},
             file_count = ${file_count || 0},
             last_boot_id = ${boot_id || null},
@@ -682,17 +664,16 @@ app.post('/api/clients/heartbeat', requireDaemonAuth, async (req, res) => {
         WHERE client_id = ${client_id}
       `;
 
-      // Log heartbeat event
+      // Log to heartbeats table
       await sql`
-        INSERT INTO events (client_id, event_type, timestamp, reviewed, acknowledged)
-        VALUES (${client_id}, 'heartbeat', ${now}, true, true)
+        INSERT INTO heartbeats (client_id, timestamp)
+        VALUES (${client_id}, ${now})
       `;
 
       client.last_boot_id = boot_id;
-      client.status = 'online'; // Received heartbeat -> Online
+      client.status = 'online';
       client.last_seen = now.toISOString();
-      client.missed_heartbeat_count = 0; // Reset misses on success
-      console.log(`[Heartbeat] Updated last_seen for ${client_id} to ${client.last_seen}`);
+      console.log(`[Heartbeat] Logged for ${client_id}`);
     }
 
 
@@ -987,7 +968,7 @@ app.get('/api/admin/list', requireAdminAuth, async (req, res) => {
   }
 });
 
-// Uptime History API - Returns Intervals for a specific date
+// Uptime History API - Returns Compiled States and Events
 app.get('/api/clients/:id/uptime', requireAdminAuth, async (req, res) => {
   try {
     const client_id = req.params.id;
@@ -1005,30 +986,47 @@ app.get('/api/clients/:id/uptime', requireAdminAuth, async (req, res) => {
       targetDateEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     }
 
-    // Query for events on the target day
+    // 1. Fetch compiled uptime states that overlap this day
+    const uptimeStates = await sql`
+      SELECT id, state, start_time, end_time, duration_minutes
+      FROM uptime 
+      WHERE client_id = ${client_id} 
+        AND (
+          (start_time <= ${targetDateEnd} AND (end_time IS NULL OR end_time >= ${targetDateStart}))
+        )
+      ORDER BY start_time ASC
+    `;
+
+    // 2. Query for non-heartbeat events on the target day
     const events = await sql`
       SELECT id, event_type, timestamp, file_path, old_hash, new_hash, reviewed
       FROM events 
       WHERE client_id = ${client_id} 
         AND timestamp >= ${targetDateStart} 
         AND timestamp <= ${targetDateEnd}
+        AND event_type NOT IN ('heartbeat', 'heartbeat_missed') -- Exclude these as they are handled by uptime table
       ORDER BY timestamp ASC
     `;
 
-    res.json({ client_id, date: date || targetDateStart.toISOString().split('T')[0], events });
+    res.json({
+      client_id,
+      date: date || targetDateStart.toISOString().split('T')[0],
+      uptime: uptimeStates,
+      events: events
+    });
   } catch (error) {
     console.error('Error fetching uptime:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Client Deregistration (Soft Delete)
+// Client Deregistration (Improved for handshakes)
 app.delete('/api/clients/:id', requireAdminAuth, async (req, res) => {
   try {
     const client_id = req.params.id;
     const { username, password } = req.body;
 
-    // Double-check admin credentials if provided (extra security layer requested)
+    // Double-check admin credentials if provided
     if (username && password) {
       const result = await sql`SELECT * FROM admins WHERE username = ${username}`;
       const admin = result[0];
@@ -1037,12 +1035,18 @@ app.delete('/api/clients/:id', requireAdminAuth, async (req, res) => {
       }
     }
 
-    // Mark as deregistered - this will trigger 403 on next heartbeat
+    // Mark as deregistered
     await sql`
       UPDATE clients 
       SET status = 'deregistered',
           last_seen = CURRENT_TIMESTAMP
-      WHERE client_id = ${client_id}
+    WHERE client_id = ${client_id}
+    `;
+
+    // Explicitly log deregistration event
+    await sql`
+      INSERT INTO events (client_id, event_type, timestamp, reviewed)
+      VALUES (${client_id}, 'deregistration', CURRENT_TIMESTAMP, true)
     `;
 
     console.log(`Client marked for deregistration: ${client_id}`);
@@ -1080,24 +1084,112 @@ app.get('/api/clients', requireAdminAuth, async (req, res) => {
   }
 });
 
-app.get('/api/clients/:client_id', requireAdminAuth, async (req, res) => {
+// Cron endpoint for uptime compilation
+app.get('/api/cron/compile-uptime', async (req, res) => {
+  // Simple protection: Check for a secret header if configured
+  const authHeader = req.headers.authorization;
+  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
   try {
-    const { client_id } = req.params;
+    console.log('[Cron] Starting uptime compilation...');
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-    const result = await sql`
-      SELECT * FROM clients WHERE client_id = ${client_id}
-    `;
+    // 1. Fetch all clients
+    const clients = await sql`SELECT client_id FROM clients WHERE status != 'deregistered'`;
 
-    if (result.length === 0) {
-      return res.status(404).json({ error: 'Client not found' });
+    for (const client of clients) {
+      const clientId = client.client_id;
+
+      // 2. Fetch heartbeats for this client in the last 24h
+      const heartbeats = await sql`
+        SELECT timestamp FROM heartbeats 
+        WHERE client_id = ${clientId} 
+          AND timestamp >= ${yesterday}
+        ORDER BY timestamp ASC
+      `;
+
+      if (heartbeats.length === 0) {
+        // If no heartbeats, machine was likely OFF all day (or newly registered)
+        // We'll mark it as DOWN starting from the last known state
+        await updateUptimeState(clientId, 'DOWN', yesterday);
+        continue;
+      }
+
+      // 3. Process heartbeats to find gaps > 15 minutes
+      let currentState = 'UP';
+      let stateStartTime = new Date(heartbeats[0].timestamp);
+
+      for (let i = 1; i < heartbeats.length; i++) {
+        const prevTime = new Date(heartbeats[i - 1].timestamp);
+        const currTime = new Date(heartbeats[i].timestamp);
+        const gapMinutes = (currTime - prevTime) / (1000 * 60);
+
+        if (gapMinutes > 15) {
+          // Found a gap! Close current UP state and log DOWN state
+          await closeUptimeState(clientId, currentState, prevTime);
+          await openUptimeState(clientId, 'DOWN', prevTime);
+          await closeUptimeState(clientId, 'DOWN', currTime);
+          await openUptimeState(clientId, 'UP', currTime);
+        }
+      }
+
+      // Note: We leave the last state open to be closed by tomorrow's cron
     }
 
-    res.json({ client: result[0] });
+    // 4. Cleanup old heartbeats (older than 7 days)
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const deleted = await sql`DELETE FROM heartbeats WHERE timestamp < ${sevenDaysAgo}`;
+    console.log(`[Cron] Cleaned up ${deleted.count || deleted.length || 0} old heartbeats.`);
+
+    res.json({ status: 'success', message: 'Uptime compilation complete' });
   } catch (error) {
-    console.error('Error fetching client details:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('[Cron] Uptime compilation failed:', error);
+    res.status(500).json({ error: error.message });
   }
 });
+
+// Helpers for Uptime state management
+async function openUptimeState(clientId, state, startTime) {
+  await sql`
+        INSERT INTO uptime (client_id, state, start_time)
+        VALUES (${clientId}, ${state}, ${startTime})
+    `;
+}
+
+async function closeUptimeState(clientId, currentState, endTime) {
+  // Find the latest open state for this machine
+  const openStates = await sql`
+        SELECT id, start_time FROM uptime 
+        WHERE client_id = ${clientId} AND end_time IS NULL 
+        ORDER BY start_time DESC LIMIT 1
+    `;
+
+  if (openStates.length > 0) {
+    const lastState = openStates[0];
+    const duration = Math.round((new Date(endTime) - new Date(lastState.start_time)) / (1000 * 60));
+    await sql`
+            UPDATE uptime 
+            SET end_time = ${endTime}, duration_minutes = ${duration}
+            WHERE id = ${lastState.id}
+        `;
+  }
+}
+
+async function updateUptimeState(clientId, newState, time) {
+  const openStates = await sql`
+        SELECT id, state FROM uptime 
+        WHERE client_id = ${clientId} AND end_time IS NULL 
+        ORDER BY start_time DESC LIMIT 1
+    `;
+
+  if (openStates.length === 0 || openStates[0].state !== newState) {
+    if (openStates.length > 0) await closeUptimeState(clientId, openStates[0].state, time);
+    await openUptimeState(clientId, newState, time);
+  }
+}
 
 // Reset counters for a client
 app.post('/api/clients/:client_id/review', requireAdminAuth, async (req, res) => {

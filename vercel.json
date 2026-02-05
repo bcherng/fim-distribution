@@ -1,0 +1,8 @@
+{
+    "crons": [
+        {
+            "path": "/api/cron/compile-uptime",
+            "schedule": "0 0 * * *"
+        }
+    ]
+}
