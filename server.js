@@ -1063,6 +1063,25 @@ app.delete('/api/clients/:id', requireAdminAuth, async (req, res) => {
 });
 
 // Client management routes
+app.get('/api/clients/:client_id', requireAdminAuth, async (req, res) => {
+  try {
+    const { client_id } = req.params;
+
+    const result = await sql`
+      SELECT * FROM clients WHERE client_id = ${client_id}
+    `;
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+
+    res.json({ client: result[0] });
+  } catch (error) {
+    console.error('Error fetching client details:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.get('/api/clients', requireAdminAuth, async (req, res) => {
   try {
     const result = await sql`
