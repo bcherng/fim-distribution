@@ -785,14 +785,51 @@ app.post('/api/events/report', requireDaemonAuth, async (req, res) => {
 
     const event_id = result[0].id;
 
+    // Directory Selection Logic
+    if (event_type === 'directory_selected') {
+      // Check for existing baseline to detect offline changes
+      const baselineResult = await sql`
+        SELECT root_hash FROM baselines 
+        WHERE client_id = ${client_id} AND directory_path = ${file_path}
+      `;
+
+      if (baselineResult.length > 0) {
+        const lastHash = baselineResult[0].root_hash;
+        if (lastHash !== root_hash) {
+          console.warn(`[Integrity] Offline change detected for ${client_id} on path ${file_path}`);
+          console.warn(`Expected: ${lastHash}, Got: ${root_hash}`);
+
+          // Log a special mismatch event
+          await sql`
+            INSERT INTO events (client_id, event_type, file_path, old_hash, new_hash, timestamp, reviewed)
+            VALUES (${client_id}, 'offline_integrity_mismatch', ${file_path}, ${lastHash}, ${root_hash}, CURRENT_TIMESTAMP, false)
+          `;
+
+          await sql`UPDATE clients SET integrity_status = 'modified' WHERE client_id = ${client_id}`;
+        }
+      }
+    }
+
     // Update client status but NOT current_root_hash yet (waiting for acknowledgement)
-    await sql`
+    let statusUpdate = sql`
       UPDATE clients 
       SET last_seen = CURRENT_TIMESTAMP,
-          attestation_valid = ${attestation_valid},
-          integrity_status = 'modified'
+          attestation_valid = ${attestation_valid}
       WHERE client_id = ${client_id}
     `;
+
+    // For these events, we don't necessarily flag 'modified' immediately if it's just selection/unselection
+    if (!['directory_selected', 'directory_unselected'].includes(event_type)) {
+      statusUpdate = sql`
+        UPDATE clients 
+        SET last_seen = CURRENT_TIMESTAMP,
+            attestation_valid = ${attestation_valid},
+            integrity_status = 'modified'
+        WHERE client_id = ${client_id}
+      `;
+    }
+
+    await statusUpdate;
 
     // Refresh memory state (Watcher reset)
     const memClient = mockData.clients.get(client_id);
@@ -836,9 +873,9 @@ app.post('/api/events/acknowledge', requireDaemonAuth, async (req, res) => {
       return res.status(400).json({ error: 'event_id is required' });
     }
 
-    // Get the event to find its root_hash
+    // Get the event details
     const eventResult = await sql`
-      SELECT root_hash, acknowledged 
+      SELECT event_type, file_path, root_hash, acknowledged 
       FROM events 
       WHERE id = ${event_id} AND client_id = ${client_id}
     `;
@@ -865,13 +902,34 @@ app.post('/api/events/acknowledge', requireDaemonAuth, async (req, res) => {
     `;
 
     // NOW update the client's current_root_hash (completing the handshake)
-    await sql`
+    let clientUpdate = sql`
       UPDATE clients 
       SET current_root_hash = ${event.root_hash},
-          last_seen = CURRENT_TIMESTAMP,
-          integrity_change_count = integrity_change_count + 1
+          last_seen = CURRENT_TIMESTAMP
       WHERE client_id = ${client_id}
     `;
+
+    // Directory baseline tracking
+    if (event.event_type === 'directory_unselected' || event.event_type === 'directory_selected') {
+      console.log(`[Baseline] Updating baseline for ${client_id} on path ${event.file_path} to ${event.root_hash}`);
+      await sql`
+        INSERT INTO baselines (client_id, directory_path, root_hash)
+        VALUES (${client_id}, ${event.file_path}, ${event.root_hash})
+        ON CONFLICT (client_id, directory_path) 
+        DO UPDATE SET root_hash = EXCLUDED.root_hash, created_at = CURRENT_TIMESTAMP
+      `;
+    } else {
+      // Standard event: increment integrity count
+      clientUpdate = sql`
+        UPDATE clients 
+        SET current_root_hash = ${event.root_hash},
+            last_seen = CURRENT_TIMESTAMP,
+            integrity_change_count = integrity_change_count + 1
+        WHERE client_id = ${client_id}
+      `;
+    }
+
+    await clientUpdate;
 
     console.log(`Event ${event_id} acknowledged by ${client_id} - hash updated to ${event.root_hash}`);
 
@@ -1075,7 +1133,38 @@ app.get('/api/clients/:client_id', requireAdminAuth, async (req, res) => {
       return res.status(404).json({ error: 'Client not found' });
     }
 
-    res.json({ client: result[0] });
+    const client = result[0];
+
+    // Calculate dynamic stats since last review
+    const integrityCount = await sql`
+      SELECT count(*) as count FROM events 
+      WHERE client_id = ${client_id} 
+        AND reviewed = false 
+        AND event_type NOT IN ('heartbeat', 'heartbeat_missed', 'directory_selected', 'directory_unselected', 'registration', 'deregistration', 'reinstall', 'uninstall', 'attestation_failed')
+    `;
+
+    const downtimeCount = await sql`
+      SELECT count(*) as count FROM events 
+      WHERE client_id = ${client_id} 
+        AND reviewed = false 
+        AND event_type = 'heartbeat_missed'
+    `;
+
+    const attestationFailed = await sql`
+      SELECT count(*) as count FROM events 
+      WHERE client_id = ${client_id} 
+        AND reviewed = false 
+        AND event_type = 'attestation_failed'
+    `;
+
+    res.json({
+      client: {
+        ...client,
+        integrity_change_count: parseInt(integrityCount[0].count),
+        missed_heartbeat_count: parseInt(downtimeCount[0].count), // Using this for "downtime intervals"
+        attestation_status: parseInt(attestationFailed[0].count) > 0 ? 'FAILED' : 'OK'
+      }
+    });
   } catch (error) {
     console.error('Error fetching client details:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -1215,16 +1304,25 @@ app.post('/api/clients/:client_id/review', requireAdminAuth, async (req, res) =>
   try {
     const { client_id } = req.params;
 
+    // 1. Mark all pending events as reviewed
+    await sql`
+      UPDATE events 
+      SET reviewed = true, 
+          reviewed_at = CURRENT_TIMESTAMP, 
+          reviewed_by = ${req.user.username}
+      WHERE client_id = ${client_id} AND reviewed = false
+    `;
+
+    // 2. Update client last_reviewed_at and reset counts in the table (as a fallback)
     await sql`
       UPDATE clients 
       SET last_reviewed_at = CURRENT_TIMESTAMP,
-          missed_heartbeat_count = 0,
-          attestation_error_count = 0,
-          integrity_change_count = 0
+          integrity_change_count = 0,
+          attestation_error_count = 0
       WHERE client_id = ${client_id}
     `;
 
-    res.json({ status: 'success', message: 'Client indicators reset' });
+    res.json({ status: 'success', message: 'Client review completed' });
     broadcastUpdate(client_id, 'client_reviewed');
   } catch (error) {
     console.error('Error reviewing client:', error);
