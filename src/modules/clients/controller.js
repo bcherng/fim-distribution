@@ -14,12 +14,11 @@ export const register = async (req, res) => {
         const hardware = parseHardwareInfo(hardware_info);
 
         await sql`
-      INSERT INTO clients (client_id, hardware_info, baseline_id, status, file_count, attestation_valid)
-      VALUES (${client_id}, ${JSON.stringify(hardware)}, ${baseline_id || 1}, 'online', 0, true)
+      INSERT INTO clients (client_id, hardware_info, status, file_count, attestation_valid)
+      VALUES (${client_id}, ${JSON.stringify(hardware)}, 'online', 0, true)
       ON CONFLICT (client_id) 
       DO UPDATE SET 
         hardware_info = EXCLUDED.hardware_info,
-        baseline_id = EXCLUDED.baseline_id,
         last_seen = CURRENT_TIMESTAMP,
         status = 'online'
     `;
@@ -62,10 +61,15 @@ export const reregister = async (req, res) => {
         const client = clientResult[0];
         if (client.status !== 'deregistered') return res.status(400).json({ error: 'Client is not deregistered' });
 
-        await sql`
+        const updateResult = await sql`
       UPDATE clients SET status = 'online', last_seen = CURRENT_TIMESTAMP
       WHERE client_id = ${client_id}
+      RETURNING client_id
     `;
+
+        if (updateResult.length === 0) {
+            return res.status(404).json({ error: 'Client not found in database to reregister' });
+        }
 
         await sql`
       INSERT INTO events (client_id, event_type, timestamp, reviewed)
@@ -101,10 +105,15 @@ export const uninstall = async (req, res) => {
         const admin = await verifyAdmin(username, password);
         if (!admin) return res.status(401).json({ error: 'Invalid admin credentials' });
 
-        await sql`
+        const updateResult = await sql`
       UPDATE clients SET status = 'uninstalled', last_seen = CURRENT_TIMESTAMP
       WHERE client_id = ${client_id}
+      RETURNING client_id
     `;
+
+        if (updateResult.length === 0) {
+            return res.status(404).json({ error: 'Client not found. Cannot record uninstallation.' });
+        }
 
         await sql`
       INSERT INTO events (client_id, event_type, timestamp, reviewed)

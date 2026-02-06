@@ -20,7 +20,7 @@ app.use(express.static(path.join(ROOT_DIR, 'public')));
 app.use('/', uiRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/clients', clientRoutes);
-app.use('/api/clients', uptimeRoutes); // To support /api/clients/:id/uptime
+app.use('/api/clients/:id/uptime', uptimeRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/downloads', downloadRoutes);
 app.use('/api', systemRoutes); // For /api/config and /api/cron
