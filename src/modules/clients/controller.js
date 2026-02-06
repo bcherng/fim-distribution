@@ -149,6 +149,30 @@ export const uninstall = async (req, res) => {
     }
 };
 
+export const saveBaseline = async (req, res) => {
+    try {
+        const { client_id, root_hash, file_count, directory_path } = req.body;
+        if (!client_id) return res.status(400).json({ error: 'client_id is required' });
+
+        console.log(`[Baseline] Saving for ${client_id} at ${directory_path || 'ROOT'}`);
+
+        await sql`
+            INSERT INTO monitored_paths (client_id, directory_path, root_hash, file_count)
+            VALUES (${client_id}, ${directory_path || 'DEFAULT'}, ${root_hash}, ${file_count || 0})
+            ON CONFLICT (client_id, directory_path) 
+            DO UPDATE SET 
+                root_hash = EXCLUDED.root_hash, 
+                file_count = EXCLUDED.file_count, 
+                updated_at = CURRENT_TIMESTAMP
+        `;
+
+        res.json({ status: 'success', message: 'Baseline saved successfully' });
+    } catch (error) {
+        console.error('[Baseline] Fatal error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
 export const heartbeat = async (req, res) => {
     try {
         const { file_count, current_root_hash, boot_id } = req.body;
@@ -276,6 +300,32 @@ export const deleteClient = async (req, res) => {
         res.json({ status: 'success', message: 'Client deregistered.' });
     } catch (error) {
         console.error('Deregistration error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+export const reviewClient = async (req, res) => {
+    try {
+        const { client_id } = req.params;
+        const now = new Date();
+
+        await sql`
+            UPDATE events 
+            SET reviewed = true, reviewed_at = ${now}
+            WHERE client_id = ${client_id} AND reviewed = false
+        `;
+
+        await sql`
+            UPDATE clients 
+            SET last_reviewed_at = ${now},
+                attestation_valid = true
+            WHERE client_id = ${client_id}
+        `;
+
+        broadcastUpdate(client_id, 'client_reviewed');
+        res.json({ status: 'success', message: 'Client state reviewed and reset' });
+    } catch (error) {
+        console.error('Review client error:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 };

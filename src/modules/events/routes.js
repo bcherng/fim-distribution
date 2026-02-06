@@ -4,9 +4,9 @@ import { requireAdminAuth, requireDaemonAuth } from '../../middleware/auth.js';
 
 const router = express.Router();
 
-router.post('/report-event', requireDaemonAuth, eventsController.reportEvent);
-router.post('/events/acknowledge', requireDaemonAuth, eventsController.acknowledgeEvent);
-router.get('/events/:client_id', requireAdminAuth, eventsController.getClientEvents);
-router.post('/events/review/:id', requireAdminAuth, eventsController.reviewEvent);
+router.post('/report', requireDaemonAuth, eventsController.reportEvent);
+router.post('/acknowledge', requireDaemonAuth, eventsController.acknowledgeEvent);
+router.get('/:client_id', requireAdminAuth, eventsController.getClientEvents);
+router.post('/review/:id', requireAdminAuth, eventsController.reviewEvent);
 
 export default router;

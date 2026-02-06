@@ -19,9 +19,9 @@ app.use(express.static(path.join(ROOT_DIR, 'public')));
 // Routes
 app.use('/', uiRoutes);
 app.use('/api/auth', authRoutes);
-app.use('/api', clientRoutes);
-app.use('/api/uptime', uptimeRoutes);
-app.use('/api', eventRoutes);
+app.use('/api/clients', clientRoutes);
+app.use('/api/clients/:id/uptime', uptimeRoutes);
+app.use('/api/events', eventRoutes);
 app.use('/downloads', downloadRoutes);
 app.use('/api', systemRoutes);
 
