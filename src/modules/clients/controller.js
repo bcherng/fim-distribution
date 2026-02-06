@@ -8,20 +8,34 @@ const DAEMON_JWT_SECRET = process.env.DAEMON_JWT_SECRET || 'your-default-daemon-
 
 export const register = async (req, res) => {
     try {
-        const { client_id, hardware_info, baseline_id } = req.body;
-        if (!client_id) return res.status(400).json({ error: 'client_id is required' });
+        const { client_id: raw_client_id, hardware_info } = req.body;
+        const client_id = String(raw_client_id);
+        console.log(`[Register] Request for client_id: "${client_id}"`);
+
+        if (!client_id || client_id === 'undefined') {
+            return res.status(400).json({ error: 'client_id is required' });
+        }
 
         const hardware = parseHardwareInfo(hardware_info);
 
-        await sql`
-      INSERT INTO clients (client_id, hardware_info, status, file_count, attestation_valid)
-      VALUES (${client_id}, ${JSON.stringify(hardware)}, 'online', 0, true)
-      ON CONFLICT (client_id) 
-      DO UPDATE SET 
-        hardware_info = EXCLUDED.hardware_info,
-        last_seen = CURRENT_TIMESTAMP,
-        status = 'online'
-    `;
+        try {
+            console.log(`[Register] Attempting INSERT for client: ${client_id}`);
+            const insertResult = await sql`
+                INSERT INTO clients (client_id, hardware_info, status, file_count, attestation_valid)
+                VALUES (${client_id}, ${JSON.stringify(hardware)}::jsonb, 'online', 0, true)
+                ON CONFLICT (client_id) 
+                DO UPDATE SET 
+                    hardware_info = EXCLUDED.hardware_info,
+                    last_seen = CURRENT_TIMESTAMP,
+                    status = 'online'
+                RETURNING *
+            `;
+            console.log(`[Register] DB Success for ${client_id}:`, insertResult.length > 0 ? "Inserted/Updated" : "No Change");
+        } catch (dbError) {
+            console.error(`[Register] DB Failed for ${client_id}:`, dbError.message);
+            console.error(`[Register] Full Error:`, JSON.stringify(dbError));
+            throw dbError; // rethrow to hit outer catch
+        }
 
         broadcastUpdate(client_id, 'client_registered');
 
@@ -40,8 +54,8 @@ export const register = async (req, res) => {
             expires_in: 30 * 24 * 60 * 60
         });
     } catch (error) {
-        console.error('Registration error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        console.error('Registration full catch error:', error);
+        res.status(500).json({ error: error.message || 'Internal server error' });
     }
 };
 
@@ -51,7 +65,10 @@ export const verify = (req, res) => {
 
 export const reregister = async (req, res) => {
     try {
-        const { client_id, username, password } = req.body;
+        const { client_id: raw_client_id, username, password } = req.body;
+        const client_id = String(raw_client_id);
+        console.log(`[Reregister] Request for client_id: "${client_id}" by ${username}`);
+
         const admin = await verifyAdmin(username, password);
         if (!admin) return res.status(401).json({ error: 'Invalid admin credentials' });
 
@@ -101,7 +118,14 @@ export const reregister = async (req, res) => {
 
 export const uninstall = async (req, res) => {
     try {
-        const { client_id, username, password } = req.body;
+        const { client_id: raw_client_id, username, password } = req.body;
+        const client_id = String(raw_client_id);
+        console.log(`[Uninstall] Request for client_id: "${client_id}" by admin ${username}`);
+
+        if (!client_id || client_id === 'undefined') {
+            return res.status(400).json({ error: 'client_id is required' });
+        }
+
         const admin = await verifyAdmin(username, password);
         if (!admin) return res.status(401).json({ error: 'Invalid admin credentials' });
 

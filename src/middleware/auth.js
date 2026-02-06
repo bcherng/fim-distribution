@@ -48,6 +48,8 @@ export async function requireDaemonAuth(req, res, next) {
         }
 
         const client = clientResult[0];
+        console.log(`[Auth] Client ${decoded.client_id} status: ${client.status}`);
+
         if (client.status === 'deregistered') {
             return res.status(403).json({
                 error: 'This machine has been deregistered by an administrator',
