@@ -4,6 +4,6 @@ import { requireAdminAuth } from '../../middleware/auth.js';
 
 const router = express.Router();
 
-router.get('/', requireAdminAuth, uptimeController.getUptimeHistory);
+router.get('/:id', requireAdminAuth, uptimeController.getUptimeHistory);
 
 export default router;

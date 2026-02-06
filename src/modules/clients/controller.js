@@ -8,40 +8,40 @@ const DAEMON_JWT_SECRET = process.env.DAEMON_JWT_SECRET || 'your-default-daemon-
 
 export const register = async (req, res) => {
     try {
-        const { client_id: raw_client_id, hardware_info } = req.body;
-        const client_id = String(raw_client_id);
-        console.log(`[Register] Request for client_id: "${client_id}"`);
+        console.log(`[Register] Body:`, JSON.stringify(req.body));
+        const { client_id: cid1, clientId: cid2, hardware_info } = req.body;
+        const client_id = cid1 || cid2;
 
         if (!client_id || client_id === 'undefined') {
+            console.error(`[Register] Missing identifier`);
             return res.status(400).json({ error: 'client_id is required' });
         }
 
         const hardware = parseHardwareInfo(hardware_info);
+        const clientIdStr = String(client_id);
 
         try {
-            console.log(`[Register] Attempting INSERT for client: ${client_id}`);
-            const insertResult = await sql`
+            console.log(`[Register] DB Insert: ${clientIdStr}`);
+            await sql`
                 INSERT INTO clients (client_id, hardware_info, status, file_count, attestation_valid)
-                VALUES (${client_id}, ${JSON.stringify(hardware)}::jsonb, 'online', 0, true)
+                VALUES (${clientIdStr}, ${JSON.stringify(hardware)}, 'online', 0, true)
                 ON CONFLICT (client_id) 
                 DO UPDATE SET 
                     hardware_info = EXCLUDED.hardware_info,
                     last_seen = CURRENT_TIMESTAMP,
                     status = 'online'
-                RETURNING *
             `;
-            console.log(`[Register] DB Success for ${client_id}:`, insertResult.length > 0 ? "Inserted/Updated" : "No Change");
+            console.log(`[Register] DB Success for ${clientIdStr}`);
         } catch (dbError) {
-            console.error(`[Register] DB Failed for ${client_id}:`, dbError.message);
-            console.error(`[Register] Full Error:`, JSON.stringify(dbError));
-            throw dbError; // rethrow to hit outer catch
+            console.error(`[Register] DB Error ${clientIdStr}:`, dbError.message);
+            return res.status(500).json({ error: `DB Error: ${dbError.message}` });
         }
 
-        broadcastUpdate(client_id, 'client_registered');
+        broadcastUpdate(clientIdStr, 'client_registered');
 
         const daemonToken = jwt.sign({
-            client_id,
-            hardware_id: hardware.machine_id || hardware.hostname,
+            client_id: clientIdStr,
+            hardware_id: hardware.machine_id || hardware.hostname || clientIdStr,
             type: 'daemon',
             iat: Math.floor(Date.now() / 1000)
         }, DAEMON_JWT_SECRET, { expiresIn: '30d' });
@@ -49,13 +49,13 @@ export const register = async (req, res) => {
         res.json({
             status: 'success',
             message: 'Client registered successfully',
-            client_id,
+            client_id: clientIdStr,
             token: daemonToken,
             expires_in: 30 * 24 * 60 * 60
         });
     } catch (error) {
-        console.error('Registration full catch error:', error);
-        res.status(500).json({ error: error.message || 'Internal server error' });
+        console.error('[Register] Fatal:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 };
 
@@ -65,35 +65,35 @@ export const verify = (req, res) => {
 
 export const reregister = async (req, res) => {
     try {
-        const { client_id: raw_client_id, username, password } = req.body;
-        const client_id = String(raw_client_id);
-        console.log(`[Reregister] Request for client_id: "${client_id}" by ${username}`);
+        const { client_id: cid1, clientId: cid2, username, password } = req.body;
+        const client_id = cid1 || cid2;
+        console.log(`[Reregister] Client: ${client_id}, User: ${username}`);
 
         const admin = await verifyAdmin(username, password);
-        if (!admin) return res.status(401).json({ error: 'Invalid admin credentials' });
-
-        const clientResult = await sql`SELECT * FROM clients WHERE client_id = ${client_id}`;
-        if (clientResult.length === 0) return res.status(404).json({ error: 'Client not found' });
-
-        const client = clientResult[0];
-        if (client.status !== 'deregistered') return res.status(400).json({ error: 'Client is not deregistered' });
-
-        const updateResult = await sql`
-      UPDATE clients SET status = 'online', last_seen = CURRENT_TIMESTAMP
-      WHERE client_id = ${client_id}
-      RETURNING client_id
-    `;
-
-        if (updateResult.length === 0) {
-            return res.status(404).json({ error: 'Client not found in database to reregister' });
+        if (!admin) {
+            console.warn(`[Reregister] Auth failed for admin: ${username}`);
+            return res.status(401).json({ error: 'Invalid admin credentials' });
         }
 
-        await sql`
-      INSERT INTO events (client_id, event_type, timestamp, reviewed)
-      VALUES (${client_id}, 'reregister', CURRENT_TIMESTAMP, true)
-    `;
+        const clientResult = await sql`SELECT * FROM clients WHERE client_id = ${client_id}`;
+        if (clientResult.length === 0) {
+            console.warn(`[Reregister] Client not found: ${client_id}`);
+            return res.status(404).json({ error: 'Client not found in database. Please register as new machine.' });
+        }
 
-        console.log(`Client reregistered: ${client_id} by admin: ${username}`);
+        const client = clientResult[0];
+        // We allow reregistration to recover tokens even if not strictly 'deregistered'
+
+        await sql`
+            UPDATE clients SET status = 'online', last_seen = CURRENT_TIMESTAMP
+            WHERE client_id = ${client_id}
+        `;
+
+        await sql`
+            INSERT INTO events (client_id, event_type, timestamp, reviewed)
+            VALUES (${client_id}, 'reregister', CURRENT_TIMESTAMP, true)
+        `;
+
         broadcastUpdate(client_id, 'client_reregistered');
 
         const hardware = parseHardwareInfo(client.hardware_info);
@@ -111,45 +111,40 @@ export const reregister = async (req, res) => {
             expires_in: 30 * 24 * 60 * 60
         });
     } catch (error) {
-        console.error('Reregistration error:', error);
+        console.error('[Reregister] Fatal error:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 };
 
 export const uninstall = async (req, res) => {
     try {
-        const { client_id: raw_client_id, username, password } = req.body;
-        const client_id = String(raw_client_id);
-        console.log(`[Uninstall] Request for client_id: "${client_id}" by admin ${username}`);
-
-        if (!client_id || client_id === 'undefined') {
-            return res.status(400).json({ error: 'client_id is required' });
-        }
+        const { client_id: cid1, clientId: cid2, username, password } = req.body;
+        const client_id = cid1 || cid2;
+        console.log(`[Uninstall] Client: ${client_id}, User: ${username}`);
 
         const admin = await verifyAdmin(username, password);
         if (!admin) return res.status(401).json({ error: 'Invalid admin credentials' });
 
         const updateResult = await sql`
-      UPDATE clients SET status = 'uninstalled', last_seen = CURRENT_TIMESTAMP
-      WHERE client_id = ${client_id}
-      RETURNING client_id
-    `;
+            UPDATE clients SET status = 'uninstalled', last_seen = CURRENT_TIMESTAMP
+            WHERE client_id = ${client_id}
+            RETURNING client_id
+        `;
 
         if (updateResult.length === 0) {
+            console.warn(`[Uninstall] Client not found: ${client_id}`);
             return res.status(404).json({ error: 'Client not found. Cannot record uninstallation.' });
         }
 
         await sql`
-      INSERT INTO events (client_id, event_type, timestamp, reviewed)
-      VALUES (${client_id}, 'uninstall', CURRENT_TIMESTAMP, true)
-    `;
+            INSERT INTO events (client_id, event_type, timestamp, reviewed)
+            VALUES (${client_id}, 'uninstall', CURRENT_TIMESTAMP, true)
+        `;
 
-        console.log(`Client uninstalled: ${client_id} by admin: ${username}`);
         broadcastUpdate(client_id, 'client_uninstalled');
-
-        res.json({ status: 'success', message: 'Uninstall recorded. Logs preserved.' });
+        res.json({ status: 'success', message: 'Uninstall recorded.' });
     } catch (error) {
-        console.error('Uninstall recording error:', error);
+        console.error('[Uninstall] Fatal error:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 };

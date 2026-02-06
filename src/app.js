@@ -19,10 +19,13 @@ app.use(express.static(path.join(ROOT_DIR, 'public')));
 // Routes
 app.use('/', uiRoutes);
 app.use('/api/auth', authRoutes);
-app.use('/api/clients', clientRoutes);
-app.use('/api/clients/:id/uptime', uptimeRoutes);
-app.use('/api/events', eventRoutes);
+app.use('/api', clientRoutes);
+app.use('/api/uptime', uptimeRoutes);
+app.use('/api', eventRoutes);
 app.use('/downloads', downloadRoutes);
-app.use('/api', systemRoutes); // For /api/config and /api/cron
+app.use('/api', systemRoutes);
+
+// Add health check for daemon connectivity tests
+app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 export default app;
