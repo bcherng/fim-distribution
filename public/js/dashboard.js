@@ -467,30 +467,6 @@ document.addEventListener('DOMContentLoaded', function () {
         container.appendChild(wrapper);
     }
 
-    async function handleReview() {
-        const clientId = reviewBtn.getAttribute('data-client-id');
-        if (!clientId) return;
-
-        try {
-            reviewBtn.disabled = true;
-            const response = await fetch(`/api/clients/${encodeURIComponent(clientId)}/review`, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            if (response.ok) {
-                alert('Review completed.');
-                loadMachines();
-                closeModal();
-            } else {
-                throw new Error('Failed to submit review');
-            }
-        } catch (error) {
-            alert(error.message);
-        } finally {
-            reviewBtn.disabled = false;
-        }
-    }
 
     async function handleLogout() {
         try {
