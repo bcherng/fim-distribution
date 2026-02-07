@@ -6,7 +6,8 @@ export const reportEvent = async (req, res) => {
     try {
         const {
             id, event_type, file_path, old_hash, new_hash,
-            root_hash, merkle_proof, last_valid_hash, timestamp
+            root_hash, merkle_proof, last_valid_hash, timestamp,
+            file_count
         } = req.body;
 
         const client_id = req.daemon.client_id;
@@ -63,10 +64,13 @@ export const reportEvent = async (req, res) => {
 
         if (event_type === 'directory_selected') {
             await sql`
-        INSERT INTO monitored_paths (client_id, directory_path, root_hash)
-        VALUES (${client_id}, ${file_path}, ${root_hash})
+        INSERT INTO monitored_paths (client_id, directory_path, root_hash, file_count)
+        VALUES (${client_id}, ${file_path}, ${root_hash}, ${file_count || 0})
         ON CONFLICT (client_id, directory_path) 
-        DO UPDATE SET root_hash = EXCLUDED.root_hash, updated_at = CURRENT_TIMESTAMP
+        DO UPDATE SET 
+            root_hash = EXCLUDED.root_hash, 
+            file_count = EXCLUDED.file_count,
+            updated_at = CURRENT_TIMESTAMP
       `;
         } else {
             const monitored = await findMonitoredPath(client_id, file_path);
