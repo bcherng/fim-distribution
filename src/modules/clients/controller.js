@@ -179,23 +179,77 @@ export const heartbeat = async (req, res) => {
         const client_id = req.daemon.client_id;
         const now = new Date();
 
-        const clientResult = await sql`SELECT client_id FROM clients WHERE client_id = ${client_id}`;
+        // 1. Update Client Status
+        await sql`
+            UPDATE clients 
+            SET last_seen = ${now}, 
+                status = 'online',
+                last_heartbeat = ${now},
+                file_count = ${file_count || 0},
+                last_boot_id = ${boot_id || null},
+                current_root_hash = ${current_root_hash || null}
+            WHERE client_id = ${client_id}
+        `;
 
-        if (clientResult.length > 0) {
-            await sql`
-        UPDATE clients 
-        SET last_seen = ${now}, 
-            status = 'online',
-            last_heartbeat = ${now},
-            file_count = ${file_count || 0},
-            last_boot_id = ${boot_id || null},
-            current_root_hash = ${current_root_hash || null}
-        WHERE client_id = ${client_id}
-      `;
+        // 2. Real-time Uptime Tracking (Event Driven)
+        // Find the absolute latest uptime record (open or closed)
+        const lastUptime = await sql`
+            SELECT id, state, start_time, end_time 
+            FROM uptime 
+            WHERE client_id = ${client_id}
+            ORDER BY start_time DESC 
+            LIMIT 1
+        `;
 
-            await sql`INSERT INTO heartbeats (client_id, timestamp) VALUES (${client_id}, ${now})`;
-            console.log(`[Heartbeat] Logged for ${client_id}`);
+        if (lastUptime.length === 0) {
+            // First ever heartbeat
+            await sql`INSERT INTO uptime (client_id, state, start_time, end_time, duration_minutes) VALUES (${client_id}, 'UP', ${now}, ${now}, 0)`;
+        } else {
+            const record = lastUptime[0];
+            const lastEnd = new Date(record.end_time || record.start_time);
+            const gapMinutes = (now - lastEnd) / (1000 * 60);
+
+            if (record.state === 'UP') {
+                if (gapMinutes <= 16) { // 15m + buffer
+                    // Extend current session
+                    const newDuration = Math.round((now - new Date(record.start_time)) / (1000 * 60));
+                    await sql`
+                        UPDATE uptime 
+                        SET end_time = ${now}, duration_minutes = ${newDuration}
+                        WHERE id = ${record.id}
+                    `;
+                } else {
+                    // Gap detected (>15m) -> Downtime
+                    // 1. Close old session (already closed implicitly by having end_time, but rigorous to ensure)
+
+                    // 2. Insert DOWN session for the gap
+                    const downDuration = Math.round((now - lastEnd) / (1000 * 60));
+                    await sql`
+                        INSERT INTO uptime (client_id, state, start_time, end_time, duration_minutes)
+                        VALUES (${client_id}, 'DOWN', ${lastEnd}, ${now}, ${downDuration})
+                    `;
+
+                    // 3. Start new UP session
+                    await sql`
+                        INSERT INTO uptime (client_id, state, start_time, end_time, duration_minutes) 
+                        VALUES (${client_id}, 'UP', ${now}, ${now}, 0)
+                    `;
+                }
+            } else {
+                // Last state was DOWN (or other) -> Start new UP
+                await sql`
+                    INSERT INTO uptime (client_id, state, start_time, end_time, duration_minutes) 
+                    VALUES (${client_id}, 'UP', ${now}, ${now}, 0)
+                `;
+            }
         }
+
+        // 3. Log raw heartbeat for audit (optional: could delete old ones here to save space)
+        await sql`INSERT INTO heartbeats (client_id, timestamp) VALUES (${client_id}, ${now})`;
+        // Optional: Delete heartbeats older than 7 days
+        // await sql`DELETE FROM heartbeats WHERE timestamp < NOW() - INTERVAL '7 days'`;
+
+        console.log(`[Heartbeat] Processed for ${client_id}`);
 
         res.json({
             status: 'success',

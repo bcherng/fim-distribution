@@ -1,3 +1,4 @@
+import express from 'express';
 import * as clientsController from './controller.js';
 import * as eventsController from '../events/controller.js';
 import * as uptimeController from '../uptime/controller.js';
