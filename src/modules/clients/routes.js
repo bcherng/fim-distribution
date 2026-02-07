@@ -1,5 +1,6 @@
-import express from 'express';
 import * as clientsController from './controller.js';
+import * as eventsController from '../events/controller.js';
+import * as uptimeController from '../uptime/controller.js';
 import { requireAdminAuth, requireDaemonAuth } from '../../middleware/auth.js';
 
 const router = express.Router();
@@ -13,6 +14,8 @@ router.post('/baseline', requireDaemonAuth, clientsController.saveBaseline);
 // Admin facing routes
 router.get('/', requireAdminAuth, clientsController.getClients);
 router.get('/:client_id', requireAdminAuth, clientsController.getClientDetails);
+router.get('/:client_id/events', requireAdminAuth, eventsController.getClientEvents);
+router.get('/:client_id/uptime', requireAdminAuth, uptimeController.getUptimeHistory);
 router.post('/:client_id/review', requireAdminAuth, clientsController.reviewClient);
 router.delete('/:id', requireAdminAuth, clientsController.deleteClient);
 router.post('/reregister', clientsController.reregister);

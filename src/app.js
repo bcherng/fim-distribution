@@ -4,7 +4,6 @@ import uiRoutes from './modules/ui/routes.js';
 import authRoutes from './modules/auth/routes.js';
 import clientRoutes from './modules/clients/routes.js';
 import eventRoutes from './modules/events/routes.js';
-import uptimeRoutes from './modules/uptime/routes.js';
 import downloadRoutes from './modules/downloads/routes.js';
 import systemRoutes from './modules/system/routes.js';
 
