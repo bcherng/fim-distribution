@@ -207,9 +207,13 @@ export const heartbeat = async (req, res) => {
         } else {
             const record = lastUptime[0];
             const lastEnd = new Date(record.end_time || record.start_time);
-            const gapMinutes = (now - lastEnd) / (1000 * 60);
+            const gapMs = now - lastEnd;
+            const gapMinutes = gapMs / (1000 * 60);
 
-            if (record.state === 'UP') {
+            if (gapMs <= 0) {
+                // Ignore redundant heartbeat or clock skew (already processed at this ms)
+                console.log(`[Heartbeat] Redundant at ${now.toISOString()}`);
+            } else if (record.state === 'UP') {
                 if (gapMinutes <= 16) { // 15m + buffer
                     // Extend current session
                     const newDuration = Math.round((now - new Date(record.start_time)) / (1000 * 60));

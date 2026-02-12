@@ -237,11 +237,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
                 // Snap boundaries
                 const startSlot = getSnappedSlotIndex(start);
-                const endSlot = getSnappedSlotIndex(end);
+                const endSlot = Math.max(getSnappedSlotIndex(end), startSlot + (start.getTime() === end.getTime() ? 0 : 1));
 
                 if (i >= startSlot && i < endSlot) {
                     state = ut.state;
-                    break;
+                    // Don't break yet - let later records in the array (newer start times) overwrite if they overlap
                 }
             }
 
