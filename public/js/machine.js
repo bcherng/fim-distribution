@@ -212,13 +212,6 @@ document.addEventListener('DOMContentLoaded', function () {
         const SLOT_COUNT = 96;
         const SLOT_MS = 15 * 60 * 1000;
 
-        // Snapping helper: snaps a date to the nearest 15m interval relative to day start
-        function getSnappedSlotIndex(date) {
-            const t = new Date(date).getTime();
-            const diff = t - dayStart.getTime();
-            return Math.round(diff / SLOT_MS);
-        }
-
         for (let i = 0; i < SLOT_COUNT; i++) {
             const slotStart = new Date(dayStart.getTime() + i * SLOT_MS);
             const slotEnd = new Date(slotStart.getTime() + SLOT_MS);
@@ -235,13 +228,9 @@ document.addEventListener('DOMContentLoaded', function () {
                 const start = new Date(ut.start_time);
                 const end = ut.end_time ? new Date(ut.end_time) : new Date(); // Treat open as current
 
-                // Snap boundaries
-                const startSlot = getSnappedSlotIndex(start);
-                const endSlot = Math.max(getSnappedSlotIndex(end), startSlot + (start.getTime() === end.getTime() ? 0 : 1));
-
-                if (i >= startSlot && i < endSlot) {
+                // Check real overlap with this 15min slot
+                if (slotStart < end && slotEnd > start) {
                     state = ut.state;
-                    // Don't break yet - let later records in the array (newer start times) overwrite if they overlap
                 }
             }
 

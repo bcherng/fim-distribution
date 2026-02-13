@@ -211,7 +211,7 @@ export const heartbeat = async (req, res) => {
             const gapMinutes = gapMs / (1000 * 60);
 
             if (gapMs <= 0) {
-                // Ignore redundant heartbeat or clock skew (already processed at this ms)
+                // Ignore redundant heartbeat or clock skew
                 console.log(`[Heartbeat] Redundant at ${now.toISOString()}`);
             } else if (record.state === 'UP') {
                 if (gapMinutes <= 16) { // 15m + buffer
@@ -224,7 +224,12 @@ export const heartbeat = async (req, res) => {
                     `;
                 } else {
                     // Gap detected (>15m) -> Downtime
-                    // 1. Close old session (already closed implicitly by having end_time, but rigorous to ensure)
+                    // 1. Close old UP session explicitly
+                    const finalUpDuration = Math.max(0, Math.round((lastEnd - new Date(record.start_time)) / (1000 * 60)));
+                    await sql`
+                        UPDATE uptime SET end_time = ${lastEnd}, duration_minutes = ${finalUpDuration}
+                        WHERE id = ${record.id}
+                    `;
 
                     // 2. Insert DOWN session for the gap
                     const downDuration = Math.round((now - lastEnd) / (1000 * 60));
@@ -241,6 +246,11 @@ export const heartbeat = async (req, res) => {
                 }
             } else {
                 // Last state was DOWN (or other) -> Start new UP
+                // First, ensure any previous record is closed if it was somehow left open
+                if (!record.end_time) {
+                    await sql`UPDATE uptime SET end_time = ${now} WHERE id = ${record.id}`;
+                }
+
                 await sql`
                     INSERT INTO uptime (client_id, state, start_time, end_time, duration_minutes) 
                     VALUES (${client_id}, 'UP', ${now}, ${now}, 0)
