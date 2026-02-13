@@ -207,7 +207,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const track = document.createElement('div');
         track.className = 'timeline-track';
-        track.style = 'position: relative; height: 40px; background: #f1f2f6; border-radius: 4px; overflow: hidden; display: flex;';
+        track.style.cssText = 'position: relative; height: 40px; background: #f1f2f6; border-radius: 4px; overflow: hidden; display: flex;';
 
         const SLOT_COUNT = 96;
         const SLOT_MS = 15 * 60 * 1000;
@@ -267,7 +267,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 } else if (hasIntegrity) {
                     // Create an orange pip
                     const pip = document.createElement('div');
-                    pip.style = 'width: 4px; height: 4px; background: #e67e22; border-radius: 50%; margin: 2px auto;';
+                    pip.style.cssText = 'width: 4px; height: 4px; background: #e67e22; border-radius: 50%; margin: 2px auto; min-width: 4px; min-height: 4px;';
                     block.appendChild(pip);
                 }
 
