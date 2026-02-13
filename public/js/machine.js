@@ -306,8 +306,4 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Initial Load
     loadApprovalQueue();
-
-    // Real-time updates via Pusher
-    // (Requires config endpoint similar to dashboard, omitting for brevity unless requested, 
-    // but the approval button callback handles the immediate refresh which is the critical real-time part for the user flow)
 });

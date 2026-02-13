@@ -1,3 +1,5 @@
+import { sql } from '../../config/db.js';
+
 export const getUptimeHistory = async (req, res) => {
     try {
         const client_id = req.params.client_id || req.params.id; // Support both params
