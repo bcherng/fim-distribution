@@ -207,7 +207,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const track = document.createElement('div');
         track.className = 'timeline-track';
-        track.style.cssText = 'position: relative; height: 40px; background: #f1f2f6; border-radius: 4px; overflow: hidden; display: flex;';
+        track.style.cssText = 'position: relative; height: 40px; min-height: 40px; background: #f1f2f6; border-radius: 4px; overflow: hidden; display: flex; width: 100%; flex-shrink: 0;';
 
         const SLOT_COUNT = 96;
         const SLOT_MS = 15 * 60 * 1000;
