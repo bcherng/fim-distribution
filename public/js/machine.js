@@ -207,7 +207,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const track = document.createElement('div');
         track.className = 'timeline-track';
-        track.style.cssText = 'position: relative; height: 40px; min-height: 40px; background: #f1f2f6; border-radius: 4px; overflow: hidden; display: flex; width: 100%; flex-shrink: 0; align-items: stretch;';
+        track.style.cssText = 'position: relative; height: 60vh; min-height: 60vh; background: #f1f2f6; border-radius: 4px; overflow: hidden; display: flex; width: 100%; flex-shrink: 0; align-items: stretch;';
 
         const SLOT_COUNT = 96;
         const SLOT_MS = 15 * 60 * 1000;
@@ -218,7 +218,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
             const block = document.createElement('div');
             block.style.flex = '1';
-            block.style.height = '100%';
+            block.style.height = '60vh';
             block.style.borderRight = '1px solid rgba(255,255,255,0.1)';
             block.style.transition = 'background 0.3s ease';
 
