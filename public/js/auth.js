@@ -1,10 +1,22 @@
-document.addEventListener('DOMContentLoaded', function() {
+/**
+ * Initializes the login page and handles the authentication form submission.
+ */
+document.addEventListener('DOMContentLoaded', function () {
     const loginForm = document.getElementById('loginForm');
     const errorMessage = document.getElementById('errorMessage');
 
-    loginForm.addEventListener('submit', async function(e) {
+    /**
+     * Displays an error message on the login form.
+     * @param {string} message - The error message to show.
+     */
+    function showError(message) {
+        errorMessage.textContent = message;
+        errorMessage.style.display = 'block';
+    }
+
+    loginForm.addEventListener('submit', async function (e) {
         e.preventDefault();
-        
+
         const formData = new FormData(loginForm);
         const username = formData.get('username');
         const password = formData.get('password');
@@ -21,7 +33,6 @@ document.addEventListener('DOMContentLoaded', function() {
             const data = await response.json();
 
             if (response.ok) {
-                // Store token and redirect to dashboard
                 localStorage.setItem('fim_token', data.token);
                 localStorage.setItem('fim_user', JSON.stringify(data.user));
                 window.location.href = '/dashboard';
@@ -33,12 +44,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    function showError(message) {
-        errorMessage.textContent = message;
-        errorMessage.style.display = 'block';
-    }
-
-    // Check if already logged in
     const token = localStorage.getItem('fim_token');
     if (token) {
         window.location.href = '/dashboard';

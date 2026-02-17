@@ -152,6 +152,27 @@ header {
   border-bottom: 2px solid #e0e0e0;
 }
 
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+  padding-bottom: 10px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 2em;
+  color: #2c3e50;
+}
+
+.page-header p {
+  margin: 5px 0 0;
+  color: #7f8c8d;
+}
+
 header h1 {
   color: #2c3e50;
   margin-bottom: 10px;
@@ -545,4 +566,14 @@ header p {
   background: #fef9c3;
   color: #ca8a04;
   border: 1px solid #fef08a;
+}
+
+.removal-form-spacing {
+  margin-top: 20px;
+}
+
+.warning-text {
+  color: #e67e22;
+  font-weight: 500;
+  margin-top: 10px;
 }

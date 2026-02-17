@@ -1,3 +1,8 @@
+import { escapeHtml, formatDate, checkAuth, logout } from './utils.js';
+
+/**
+ * Main application logic for the FIM Dashboard.
+ */
 document.addEventListener('DOMContentLoaded', function () {
     const machineTableBody = document.getElementById('machineTableBody');
     const machineInfo = document.getElementById('machineInfo');
@@ -10,8 +15,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const lastUpdated = document.getElementById('lastUpdated');
     const modalBackdrop = document.getElementById('modalBackdrop');
     const closeModalBtn = document.getElementById('closeModalBtn');
+    const searchInput = document.getElementById('searchInput');
 
-    // Removal elements
     const removalModal = document.getElementById('removalModal');
     const removalMachineId = document.getElementById('removalMachineId');
     const adminUsernameInput = document.getElementById('adminUsername');
@@ -20,37 +25,29 @@ document.addEventListener('DOMContentLoaded', function () {
     const cancelRemovalBtn = document.getElementById('cancelRemovalBtn');
     const confirmRemovalBtn = document.getElementById('confirmRemovalBtn');
 
-    // Real-time update state
     let dirtyClients = new Set();
     let clientToDelete = null;
     let pusher = null;
     let channel = null;
+    let machinesCache = [];
 
-    // Check authentication
-    const token = localStorage.getItem('fim_token');
-    const user = JSON.parse(localStorage.getItem('fim_user') || '{}');
-
-    if (!token) {
-        window.location.href = '/login';
-        return;
-    }
+    const auth = checkAuth();
+    if (!auth) return;
+    const { token, user } = auth;
 
     userWelcome.textContent = `Welcome, ${user.username}`;
 
-    // Event listeners
-    logoutBtn.addEventListener('click', handleLogout);
-
-
-    // Modal closing logic
+    /**
+     * Closes the machine details modal.
+     */
     const closeModal = () => {
         machineInfo.style.display = 'none';
         modalBackdrop.style.display = 'none';
     };
 
-    closeModalBtn.addEventListener('click', closeModal);
-    modalBackdrop.addEventListener('click', closeModal);
-
-    // Removal Logic
+    /**
+     * Closes the machine removal confirmation modal.
+     */
     const closeRemovalModal = () => {
         removalModal.style.display = 'none';
         modalBackdrop.style.display = 'none';
@@ -59,225 +56,52 @@ document.addEventListener('DOMContentLoaded', function () {
         adminPasswordInput.value = '';
     };
 
-    closeRemovalModalBtn.addEventListener('click', closeRemovalModal);
-    cancelRemovalBtn.addEventListener('click', closeRemovalModal);
-    confirmRemovalBtn.addEventListener('click', handleConfirmRemoval);
-
-    // Initialize systems
-    initPusher();
-    setInterval(processBatchedUpdates, 5000);
-    loadMachines();
-
-    // Search Logic
-    const searchInput = document.getElementById('searchInput');
-    let machinesCache = []; // Store fetched machines for filtering
-
-    searchInput.addEventListener('input', (e) => {
-        const term = e.target.value.toLowerCase().trim();
-        filterAndRender(term);
-    });
-
-    function filterAndRender(term) {
-        if (!term) {
-            renderMachineTable(machinesCache);
-            return;
-        }
-        const filtered = machinesCache.filter(m =>
-            m.client_id.toLowerCase().includes(term) ||
-            m.status.toLowerCase().includes(term)
-        );
-        renderMachineTable(filtered, true); // true = don't update cache
-    }
-
-    // Real-time Update Logic (Pusher)
-    async function initPusher() {
-        try {
-            liveStatus.textContent = 'Pusher Connecting...';
-            liveStatus.className = 'live-badge status-yellow';
-
-            const configRes = await fetch('/api/config');
-            const config = await configRes.json();
-
-            if (!config.pusher || !config.pusher.key) {
-                console.warn('[Pusher] Config missing, falling back to polling');
-                liveStatus.textContent = 'Polling (Ready)';
-                return;
-            }
-
-            pusher = new Pusher(config.pusher.key, {
-                cluster: config.pusher.cluster,
-                forceTLS: true
-            });
-
-            channel = pusher.subscribe('fim-updates');
-
-            channel.bind('client_updated', (data) => {
-                console.log('[Pusher] Event received:', data);
-                if (data.type === 'client_registered' || data.type === 'client_removed' || data.type === 'client_uninstalled' || data.type === 'client_reregistered') {
-                    dirtyClients.add('__all__');
-                } else if (data.clientId) {
-                    dirtyClients.add(data.clientId);
-                }
-            });
-
-            pusher.connection.bind('connected', () => {
-                console.log('[Pusher] Connected');
-                liveStatus.textContent = 'Pusher (Live)';
-                liveStatus.className = 'live-badge status-green';
-            });
-
-            pusher.connection.bind('disconnected', () => {
-                console.log('[Pusher] Disconnected');
-                liveStatus.textContent = 'Pusher (Offline)';
-                liveStatus.className = 'live-badge status-red';
-            });
-
-            pusher.connection.bind('error', (err) => {
-                console.error('[Pusher] Error:', err);
-                liveStatus.textContent = 'Pusher Error';
-                liveStatus.className = 'live-badge status-red';
-            });
-
-        } catch (error) {
-            console.error('[Pusher] Init failed:', error);
-            liveStatus.textContent = 'Pusher Error';
-            liveStatus.className = 'live-badge status-red';
-        }
-    }
-
-    async function processBatchedUpdates() {
-        if (dirtyClients.size === 0) return;
-
-        const currentDirty = new Set(dirtyClients);
-        const needsFullRefresh = currentDirty.has('__all__');
-        dirtyClients.clear();
-
-        try {
-            const response = await fetch('/api/clients', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                if (needsFullRefresh) {
-                    renderMachineTable(data.clients || []);
-                } else {
-                    updateSpecificRows(data.clients || [], currentDirty);
-                }
-                updateLastUpdatedTime();
-            }
-        } catch (error) {
-            console.error('Error processing batched updates:', error);
-        }
-    }
-
-    function updateSpecificRows(machines, dirtySet) {
-        machines.forEach(m => {
-            if (!dirtySet.has(m.client_id)) return;
-
-            console.log(`[Dashboard] Updating row for ${m.client_id}, Last Seen: ${m.last_seen}, Status: ${m.status}`);
-
-            const row = document.querySelector(`tr[data-client-id="${m.client_id}"]`);
-            if (row) {
-                console.log('[WS] Updating row for machine:', m.client_id);
-                // Create temp table to parse new row HTML
-                const newRowHtml = generateRowHtml(m);
-                const tempTable = document.createElement('tbody');
-                tempTable.innerHTML = newRowHtml;
-                const newRow = tempTable.firstElementChild;
-                if (newRow) {
-                    row.replaceWith(newRow);
-                }
-            } else {
-                renderMachineTable(machines);
-            }
-        });
-    }
-
+    /**
+     * Updates the "Last updated" timestamp on the UI.
+     */
     function updateLastUpdatedTime() {
         const now = new Date();
         lastUpdated.textContent = `Last updated: ${now.toLocaleTimeString()}`;
     }
 
-    // ... existing initPusher ...
-
-    async function loadMachines() {
-        try {
-            machineTableBody.innerHTML = '<tr><td colspan="6" class="loading">Loading machines...</td></tr>';
-            const response = await fetch('/api/clients', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            if (response.status === 401) {
-                handleAuthError();
-                return;
-            }
-
-            if (!response.ok) throw new Error(`Server returned ${response.status}`);
-
-            const data = await response.json();
-            machinesCache = data.clients || []; // Update cache
-            // If search is active, re-apply it
-            if (searchInput.value.trim()) {
-                filterAndRender(searchInput.value.toLowerCase().trim());
-            } else {
-                renderMachineTable(machinesCache);
-            }
-
-        } catch (error) {
-            console.error('Error loading machines:', error);
-            machineTableBody.innerHTML = `<tr><td colspan="6" class="error">Error: ${error.message}</td></tr>`;
-        }
-    }
-
-    // Use shared render logic
-    function renderMachineTable(machines, skipCacheUpdate = false) {
-        if (!skipCacheUpdate) machinesCache = machines;
-
-        if (!machines || machines.length === 0) {
-            machineTableBody.innerHTML = '<tr><td colspan="6" class="loading">No machines found. Monitoring is currently inactive.</td></tr>';
-            lastUpdated.textContent = 'Last updated: ' + new Date().toLocaleTimeString();
-            return;
-        }
-        machineTableBody.innerHTML = machines.map(m => generateRowHtml(m)).join('');
-        updateLastUpdatedTime();
-    }
-
+    /**
+     * Generates the HTML for a single machine row in the table.
+     * @param {object} m - The machine object.
+     * @returns {string} The HTML string for the table row.
+     */
     function generateRowHtml(m) {
         let reachStatus = 'Healthy', reachColor = 'green';
-
-        // Use server-side "latching" properties if available, or fallback to simple logic
-        // The server now sends: status = 'online' | 'warning' | 'offline' | 'deregistered'
 
         if (m.status === 'deregistered') {
             reachStatus = 'Deregistered'; reachColor = 'grey';
         } else if (m.status === 'offline') {
             reachStatus = 'Offline'; reachColor = 'red';
-        } else if (m.status === 'warning') { // Server-side latched warning
+        } else if (m.status === 'warning') {
             reachStatus = 'Warning'; reachColor = 'yellow';
-        } else if (m.missed_heartbeat_count >= 4) { // Fallback/Legacy logic
+        } else if (m.missed_heartbeat_count >= 4) {
             reachStatus = 'Offline'; reachColor = 'red';
-        } else if (m.missed_heartbeat_count >= 1) { // Fallback/Legacy logic
+        } else if (m.missed_heartbeat_count >= 1) {
             reachStatus = 'Warning'; reachColor = 'yellow';
         }
 
         let attestStatus = 'Valid', attestColor = 'green';
-        if (m.attestation_error_count > 0 || m.attestation_valid === false) { attestStatus = 'Failed'; attestColor = 'red'; }
+        if (m.attestation_error_count > 0 || m.attestation_valid === false) {
+            attestStatus = 'Failed'; attestColor = 'red';
+        }
 
         let integStatus = 'Clean', integColor = 'green';
-        if (m.integrity_change_count > 1) { integStatus = `High Activity (${m.integrity_change_count})`; integColor = 'red'; }
-        else if (m.integrity_change_count === 1) { integStatus = 'Modified (1)'; integColor = 'yellow'; }
+        if (m.integrity_change_count > 1) {
+            integStatus = `High Activity (${m.integrity_change_count})`; integColor = 'red';
+        } else if (m.integrity_change_count === 1) {
+            integStatus = 'Modified (1)'; integColor = 'yellow';
+        }
 
-        // Disable actions if deregistered
         const actionsDisabled = m.status === 'deregistered' ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : '';
 
-        // Handle different removal states
         let removeBtn;
         if (m.status === 'deregistered') {
             removeBtn = `<span title="Pending deregistration" class="pending-icon" style="font-size: 1.2rem; cursor: help; margin-right: 15px;">⏳</span>`;
         } else if (m.status === 'uninstalled') {
-            // Uninstalled machines should not appear in list (filtered server-side)
-            // But if they do, don't show remove button
             return '';
         } else {
             removeBtn = `<button onclick="window.initiateRemoval('${m.client_id}')" class="btn-remove" title="Deregister machine">&times;</button>`;
@@ -313,16 +137,178 @@ document.addEventListener('DOMContentLoaded', function () {
         `;
     }
 
-    // ... existing code ...
+    /**
+     * Renders the entire machine table.
+     * @param {Array} machines - The list of machine objects to render.
+     * @param {boolean} skipCacheUpdate - If true, the internal machines cache will not be updated.
+     */
+    function renderMachineTable(machines, skipCacheUpdate = false) {
+        if (!skipCacheUpdate) machinesCache = machines;
 
-    // Removal initiation function
-    window.initiateRemoval = function (clientId) {
-        clientToDelete = clientId;
-        removalMachineId.textContent = clientId;
-        removalModal.style.display = 'block';
-        modalBackdrop.style.display = 'block';
-    };
+        if (!machines || machines.length === 0) {
+            machineTableBody.innerHTML = '<tr><td colspan="6" class="loading">No machines found. Monitoring is currently inactive.</td></tr>';
+            updateLastUpdatedTime();
+            return;
+        }
+        machineTableBody.innerHTML = machines.map(m => generateRowHtml(m)).join('');
+        updateLastUpdatedTime();
+    }
 
+    /**
+     * Filters the machines cache based on the search term and re-renders the table.
+     * @param {string} term - The search term.
+     */
+    function filterAndRender(term) {
+        if (!term) {
+            renderMachineTable(machinesCache);
+            return;
+        }
+        const filtered = machinesCache.filter(m =>
+            m.client_id.toLowerCase().includes(term) ||
+            m.status.toLowerCase().includes(term)
+        );
+        renderMachineTable(filtered, true);
+    }
+
+    /**
+     * fetish list of machines from the API and renders them.
+     */
+    async function loadMachines() {
+        try {
+            machineTableBody.innerHTML = '<tr><td colspan="6" class="loading">Loading machines...</td></tr>';
+            const response = await fetch('/api/clients', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (response.status === 401) {
+                logout(token);
+                return;
+            }
+
+            if (!response.ok) throw new Error(`Server returned ${response.status}`);
+
+            const data = await response.json();
+            machinesCache = data.clients || [];
+            if (searchInput.value.trim()) {
+                filterAndRender(searchInput.value.toLowerCase().trim());
+            } else {
+                renderMachineTable(machinesCache);
+            }
+        } catch (error) {
+            console.error('Error loading machines:', error);
+            machineTableBody.innerHTML = `<tr><td colspan="6" class="error">Error: ${error.message}</td></tr>`;
+        }
+    }
+
+    /**
+     * Updates specific rows in the machine table without a full re-render.
+     * @param {Array} machines - The list of machine objects.
+     * @param {Set} dirtySet - The set of laundry client IDs that need updating.
+     */
+    function updateSpecificRows(machines, dirtySet) {
+        machines.forEach(m => {
+            if (!dirtySet.has(m.client_id)) return;
+
+            const row = document.querySelector(`tr[data-client-id="${m.client_id}"]`);
+            if (row) {
+                const newRowHtml = generateRowHtml(m);
+                const tempTable = document.createElement('tbody');
+                tempTable.innerHTML = newRowHtml;
+                const newRow = tempTable.firstElementChild;
+                if (newRow) {
+                    row.replaceWith(newRow);
+                }
+            } else {
+                renderMachineTable(machines);
+            }
+        });
+    }
+
+    /**
+     * Processes batched real-time updates from Pusher.
+     */
+    async function processBatchedUpdates() {
+        if (dirtyClients.size === 0) return;
+
+        const currentDirty = new Set(dirtyClients);
+        const needsFullRefresh = currentDirty.has('__all__');
+        dirtyClients.clear();
+
+        try {
+            const response = await fetch('/api/clients', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (needsFullRefresh) {
+                    renderMachineTable(data.clients || []);
+                } else {
+                    updateSpecificRows(data.clients || [], currentDirty);
+                }
+                updateLastUpdatedTime();
+            }
+        } catch (error) {
+            console.error('Error processing batched updates:', error);
+        }
+    }
+
+    /**
+     * Initializes the Pusher real-time update system.
+     */
+    async function initPusher() {
+        try {
+            liveStatus.textContent = 'Pusher Connecting...';
+            liveStatus.className = 'live-badge status-yellow';
+
+            const configRes = await fetch('/api/config');
+            const config = await configRes.json();
+
+            if (!config.pusher || !config.pusher.key) {
+                liveStatus.textContent = 'Polling (Ready)';
+                return;
+            }
+
+            pusher = new Pusher(config.pusher.key, {
+                cluster: config.pusher.cluster,
+                forceTLS: true
+            });
+
+            channel = pusher.subscribe('fim-updates');
+
+            channel.bind('client_updated', (data) => {
+                if (['client_registered', 'client_removed', 'client_uninstalled', 'client_reregistered'].includes(data.type)) {
+                    dirtyClients.add('__all__');
+                } else if (data.clientId) {
+                    dirtyClients.add(data.clientId);
+                }
+            });
+
+            pusher.connection.bind('connected', () => {
+                liveStatus.textContent = 'Pusher (Live)';
+                liveStatus.className = 'live-badge status-green';
+            });
+
+            pusher.connection.bind('disconnected', () => {
+                liveStatus.textContent = 'Pusher (Offline)';
+                liveStatus.className = 'live-badge status-red';
+            });
+
+            pusher.connection.bind('error', () => {
+                liveStatus.textContent = 'Pusher Error';
+                liveStatus.className = 'live-badge status-red';
+            });
+
+        } catch (error) {
+            console.error('[Pusher] Init failed:', error);
+            liveStatus.textContent = 'Pusher Error';
+            liveStatus.className = 'live-badge status-red';
+        }
+    }
+
+    /**
+     * Handles the machine removal confirmation.
+     */
     async function handleConfirmRemoval() {
         if (!clientToDelete) return;
 
@@ -338,7 +324,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         try {
             confirmRemovalBtn.disabled = true;
-            confirmRemovalBtn.innerHTML = '<div class="spinner"></div>'; // Show spinner
+            confirmRemovalBtn.innerHTML = '<div class="spinner"></div>';
 
             const response = await fetch(`/api/clients/${encodeURIComponent(clientToDelete)}`, {
                 method: 'DELETE',
@@ -351,10 +337,9 @@ document.addEventListener('DOMContentLoaded', function () {
 
             const data = await response.json();
             if (response.ok) {
-                // Change UI to indicate success/pending state without page reload if possible
                 alert('Machine deregistered. It will stop communicating shortly.');
                 closeRemovalModal();
-                loadMachines(); // Reload to see "Deregistered" state
+                loadMachines();
             } else {
                 throw new Error(data.error || 'Failed to remove machine');
             }
@@ -366,8 +351,10 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-
-
+    /**
+     * Displays details for a specific machine in a modal.
+     * @param {string} clientId - The ID of the machine to show details for.
+     */
     window.showMachineDetails = function (clientId) {
         fetch(`/api/clients/${encodeURIComponent(clientId)}`, {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -396,103 +383,30 @@ document.addEventListener('DOMContentLoaded', function () {
             .catch(err => alert(err.message));
     };
 
-    function renderUptimeChart(intervals) {
-        const container = document.querySelector('.chart-container');
-        container.innerHTML = ''; // Clear canvas
-        container.style.height = 'auto'; // Adapt height
+    /**
+     * Initiates the machine removal process by showing the confirmation modal.
+     * @param {string} clientId - The ID of the machine to remove.
+     */
+    window.initiateRemoval = function (clientId) {
+        clientToDelete = clientId;
+        removalMachineId.textContent = clientId;
+        removalModal.style.display = 'block';
+        modalBackdrop.style.display = 'block';
+    };
 
-        const wrapper = document.createElement('div');
-        wrapper.className = 'timeline-container';
+    logoutBtn.addEventListener('click', () => logout(token));
+    closeModalBtn.addEventListener('click', closeModal);
+    modalBackdrop.addEventListener('click', closeModal);
+    closeRemovalModalBtn.addEventListener('click', closeRemovalModal);
+    cancelRemovalBtn.addEventListener('click', closeRemovalModal);
+    confirmRemovalBtn.addEventListener('click', handleConfirmRemoval);
 
-        const today = new Date();
-        today.setHours(23, 59, 59, 999); // End of today
+    searchInput.addEventListener('input', (e) => {
+        const term = e.target.value.toLowerCase().trim();
+        filterAndRender(term);
+    });
 
-        // Generate last 7 days
-        for (let i = 0; i < 7; i++) {
-            const dayEnd = new Date(today);
-            dayEnd.setDate(dayEnd.getDate() - i);
-            const dayStart = new Date(dayEnd);
-            dayStart.setHours(0, 0, 0, 0);
-
-            const row = document.createElement('div');
-            row.className = 'timeline-row';
-
-            const label = document.createElement('div');
-            label.className = 'timeline-label';
-            label.textContent = dayStart.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-
-            const track = document.createElement('div');
-            track.className = 'timeline-track';
-            track.title = 'No Data'; // Grey base
-
-            // Filter intervals overlapping this day
-            intervals.forEach(inv => {
-                if (inv.state !== 'UP' && inv.state !== 'SUSPECT') return; // Only draw UP/SUSPECT as white blocks
-
-                const invStart = new Date(inv.start);
-                const invEnd = inv.end ? new Date(inv.end) : new Date();
-
-                // Check overlap
-                if (invEnd < dayStart || invStart > dayEnd) return;
-
-                // Clip to day boundaries
-                const drawStart = invStart < dayStart ? dayStart : invStart;
-                const drawEnd = invEnd > dayEnd ? dayEnd : invEnd;
-
-                // Calculate Position percentages
-                const totalDayMs = 24 * 60 * 60 * 1000;
-                const startMs = drawStart - dayStart;
-                const durationMs = drawEnd - drawStart;
-
-                if (durationMs <= 0) return;
-
-                const leftPct = (startMs / totalDayMs) * 100;
-                const widthPct = (durationMs / totalDayMs) * 100;
-
-                const block = document.createElement('div');
-                block.className = 'timeline-block block-up';
-                block.style.left = `${leftPct}%`;
-                block.style.width = `${widthPct}%`;
-                block.title = `${inv.state}: ${drawStart.toLocaleTimeString()} - ${drawEnd.toLocaleTimeString()}`;
-
-                track.appendChild(block);
-            });
-
-            row.appendChild(label);
-            row.appendChild(track);
-            // Append in reverse order (Today first)
-            wrapper.appendChild(row);
-        }
-
-        container.appendChild(wrapper);
-    }
-
-
-    async function handleLogout() {
-        try {
-            await fetch('/api/auth/logout', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
-        } finally {
-            localStorage.removeItem('fim_token');
-            localStorage.removeItem('fim_user');
-            window.location.href = '/';
-        }
-    }
-
-    function handleAuthError() {
-        localStorage.removeItem('fim_token');
-        localStorage.removeItem('fim_user');
-        window.location.href = '/login';
-    }
-
-    function formatDate(dateString) {
-        if (!dateString) return 'Never';
-        return new Date(dateString).toLocaleString();
-    }
-
-    function escapeHtml(unsafe) {
-        if (!unsafe) return '';
-        return unsafe.toString()
-            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-    }
+    initPusher();
+    setInterval(processBatchedUpdates, 5000);
+    loadMachines();
 });
