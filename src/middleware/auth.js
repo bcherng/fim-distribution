@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { sql } from '../config/db.js';
 
 // Admin authentication middleware
 export async function requireAdminAuth(req, res, next) {
