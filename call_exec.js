@@ -2,7 +2,7 @@ import fs from 'fs';
 
 async function main() {
     try {
-        const r = await fetch('https://fim-distribution.vercel.app/api/diag/test_insert?bust=999');
+        const r = await fetch('https://fim-distribution.vercel.app/api/diag/run_migrations?secret=tempadmin');
         const t = await r.text();
         fs.writeFileSync('out.json', t);
         console.log("Saved to out.json");
