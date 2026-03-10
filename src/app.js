@@ -19,6 +19,7 @@ app.use(express.static(path.join(ROOT_DIR, 'public')));
 app.use('/', uiRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/endpoints', endpointRoutes);
+app.use('/api/clients', endpointRoutes); // alias for daemon and frontend compatibility
 app.use('/api/events', eventRoutes);
 app.use('/downloads', downloadRoutes);
 app.use('/api', systemRoutes);
