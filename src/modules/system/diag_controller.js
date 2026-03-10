@@ -52,23 +52,18 @@ export const checkTriggers = async (req, res) => {
     }
 };
 
-export const testInsert = async (req, res) => {
+export const runMigrations = async (req, res) => {
     try {
-        const clientIdStr = "test-123";
-        const hardware = {};
-        await sql`
-            INSERT INTO endpoints (client_id, hardware_info, status, tracked_file_count, is_attested, public_key)
-            VALUES (${clientIdStr}, ${JSON.stringify(hardware)}, 'online', 0, true, null)
-            ON CONFLICT (client_id) 
-            DO UPDATE SET 
-                hardware_info = EXCLUDED.hardware_info,
-                public_key = COALESCE(EXCLUDED.public_key, endpoints.public_key),
-                last_seen = CURRENT_TIMESTAMP,
-                status = 'online'
-        `;
-        res.json({ status: 'success' });
+        if (req.query.secret !== 'tempadmin') return res.status(403).json({ error: "unauthorized" });
+
+        await sql`ALTER TABLE endpoints ADD COLUMN IF NOT EXISTS public_key VARCHAR(2048)`;
+        await sql`ALTER TABLE events ADD COLUMN IF NOT EXISTS event_hash VARCHAR(64)`;
+        await sql`ALTER TABLE events ADD COLUMN IF NOT EXISTS prev_event_hash VARCHAR(64)`;
+        await sql`ALTER TABLE events ADD COLUMN IF NOT EXISTS signature VARCHAR(2048)`;
+
+        res.json({ status: 'success', message: 'Migrations applied' });
     } catch (e) {
-        res.status(500).json({ status: 'error', message: e.message, code: e.code, detail: e.detail, detailStr: String(e) });
+        res.status(500).json({ status: 'error', message: e.message });
     }
 };
 
