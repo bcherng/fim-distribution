@@ -44,8 +44,9 @@ export const checkTriggers = async (req, res) => {
             WHERE tc.constraint_type = 'FOREIGN KEY'
         `;
         const rules = await sql`SELECT rulename, definition FROM pg_rules WHERE tablename = 'endpoints' OR tablename = 'events'`;
+        const views = await sql`SELECT table_name, view_definition FROM information_schema.views WHERE table_schema = 'public'`;
 
-        res.json({ status: 'success', triggers, fk, rules });
+        res.json({ status: 'success', triggers, fk, rules, views });
     } catch (error) {
         res.status(500).json({ status: 'error', message: error.message });
     }
