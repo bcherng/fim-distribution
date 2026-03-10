@@ -6,5 +6,6 @@ const router = express.Router();
 
 router.get('/config', systemController.getConfig);
 router.get('/diag/schema', diagController.checkSchema);
+router.get('/cron/prune-heartbeats', systemController.pruneHeartbeats);
 
 export default router;

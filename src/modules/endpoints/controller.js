@@ -180,8 +180,6 @@ export const heartbeat = async (req, res) => {
 
         // 3. Log raw heartbeat for audit (optional: could delete old ones here to save space)
         await sql`INSERT INTO heartbeats (client_id, timestamp) VALUES (${client_id}, ${now})`;
-        // Optional: Delete heartbeats older than 7 days
-        // await sql`DELETE FROM heartbeats WHERE timestamp < NOW() - INTERVAL '7 days'`;
 
         console.log(`[Heartbeat] Processed for ${client_id}`);
 
