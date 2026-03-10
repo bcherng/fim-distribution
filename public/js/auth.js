@@ -1,17 +1,17 @@
+import { showToast } from './utils.js';
+
 /**
  * Initializes the login page and handles the authentication form submission.
  */
 document.addEventListener('DOMContentLoaded', function () {
     const loginForm = document.getElementById('loginForm');
-    const errorMessage = document.getElementById('errorMessage');
 
     /**
      * Displays an error message on the login form.
      * @param {string} message - The error message to show.
      */
     function showError(message) {
-        errorMessage.textContent = message;
-        errorMessage.style.display = 'block';
+        showToast(message, 'error');
     }
 
     loginForm.addEventListener('submit', async function (e) {

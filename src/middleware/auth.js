@@ -1,7 +1,4 @@
-import jwt from 'jsonwebtoken';
-import { sql } from '../config/db.js';
-
-const DAEMON_JWT_SECRET = process.env.DAEMON_JWT_SECRET || 'your-default-daemon-secret-key';
+import crypto from 'crypto';
 
 // Admin authentication middleware
 export async function requireAdminAuth(req, res, next) {
@@ -28,19 +25,19 @@ export async function requireAdminAuth(req, res, next) {
     }
 }
 
-// Daemon authentication middleware
+// Daemon authentication middleware (Signature Based)
 export async function requireDaemonAuth(req, res, next) {
-    const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
+    const clientId = req.headers['x-client-id'] || req.query.client_id || req.body.client_id;
+    const signature = req.headers['x-signature'];
+    const timestamp = req.headers['x-timestamp'];
 
-    if (!token) {
-        return res.status(401).json({ error: 'Authentication required' });
+    if (!clientId) {
+        return res.status(401).json({ error: 'X-Client-ID header or client_id required' });
     }
 
     try {
-        const decoded = jwt.verify(token, DAEMON_JWT_SECRET);
-
         const clientResult = await sql`
-      SELECT * FROM clients WHERE client_id = ${decoded.client_id}
+      SELECT * FROM endpoints WHERE client_id = ${clientId}
     `;
 
         if (clientResult.length === 0) {
@@ -48,25 +45,48 @@ export async function requireDaemonAuth(req, res, next) {
         }
 
         const client = clientResult[0];
-        console.log(`[Auth] Client ${decoded.client_id} status: ${client.status}`);
 
         if (client.status === 'deregistered') {
             return res.status(403).json({
                 error: 'This machine has been deregistered by an administrator',
                 status: 'deregistered',
-                message: 'Your machine has been removed from monitoring. You can either:\n1. Reregister this machine (requires admin credentials)\n2. Uninstall the FIM client completely',
                 action_required: 'reregister_or_uninstall',
                 deregistered_at: client.last_seen
             });
         }
 
+        // If the public_key is set (for clients using the V2 system), verify the signature
+        if (client.public_key && signature && timestamp) {
+            const payloadStr = timestamp + '.' + clientId;
+
+            try {
+                const verify = crypto.createVerify('SHA256');
+                verify.update(payloadStr);
+                verify.end();
+
+                const isValid = verify.verify({
+                    key: client.public_key,
+                    padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+                }, Buffer.from(signature, 'hex'));
+
+                if (!isValid) {
+                    return res.status(401).json({ error: 'Invalid device signature' });
+                }
+            } catch (cryptoErr) {
+                console.error('Signature verification threw error:', cryptoErr);
+                return res.status(401).json({ error: 'Device signature format error' });
+            }
+        } else if (client.public_key && (!signature || !timestamp)) {
+            return res.status(401).json({ error: 'Missing device signature for upgraded client' });
+        }
+
         req.daemon = {
-            client_id: decoded.client_id,
-            hardware_id: decoded.hardware_id
+            client_id: clientId,
+            hardware_id: client.hardware_id,
         };
         next();
     } catch (error) {
-        console.error('Daemon JWT verification error:', error);
-        return res.status(401).json({ error: 'Invalid token' });
+        console.error('Daemon auth error:', error);
+        return res.status(500).json({ error: 'Internal server error validating client' });
     }
 }

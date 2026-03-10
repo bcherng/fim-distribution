@@ -1,15 +1,13 @@
-import jwt from 'jsonwebtoken';
 import { sql } from '../../config/db.js';
 import { broadcastUpdate } from '../../services/broadcast.js';
 import { parseHardwareInfo } from '../../utils/hardware.js';
 import { verifyAdmin } from '../../utils/admin.js';
-
-const DAEMON_JWT_SECRET = process.env.DAEMON_JWT_SECRET || 'your-default-daemon-secret-key';
+import { processHeartbeatUptime } from '../../services/uptime.js';
 
 export const register = async (req, res) => {
     try {
         console.log(`[Register] Body:`, JSON.stringify(req.body));
-        const { client_id: cid1, clientId: cid2, hardware_info } = req.body;
+        const { client_id: cid1, clientId: cid2, hardware_info, public_key } = req.body;
         const client_id = cid1 || cid2;
 
         if (!client_id || client_id === 'undefined') {
@@ -23,11 +21,12 @@ export const register = async (req, res) => {
         try {
             console.log(`[Register] DB Insert: ${clientIdStr}`);
             await sql`
-                INSERT INTO clients (client_id, hardware_info, status, file_count, attestation_valid)
-                VALUES (${clientIdStr}, ${JSON.stringify(hardware)}, 'online', 0, true)
+                INSERT INTO endpoints (client_id, hardware_info, status, tracked_file_count, is_attested, public_key)
+                VALUES (${clientIdStr}, ${JSON.stringify(hardware)}, 'online', 0, true, ${public_key || null})
                 ON CONFLICT (client_id) 
                 DO UPDATE SET 
                     hardware_info = EXCLUDED.hardware_info,
+                    public_key = COALESCE(EXCLUDED.public_key, endpoints.public_key),
                     last_seen = CURRENT_TIMESTAMP,
                     status = 'online'
             `;
@@ -39,19 +38,12 @@ export const register = async (req, res) => {
 
         broadcastUpdate(clientIdStr, 'client_registered');
 
-        const daemonToken = jwt.sign({
-            client_id: clientIdStr,
-            hardware_id: hardware.machine_id || hardware.hostname || clientIdStr,
-            type: 'daemon',
-            iat: Math.floor(Date.now() / 1000)
-        }, DAEMON_JWT_SECRET, { expiresIn: '30d' });
+        broadcastUpdate(clientIdStr, 'client_registered');
 
         res.json({
             status: 'success',
             message: 'Client registered successfully',
-            client_id: clientIdStr,
-            token: daemonToken,
-            expires_in: 30 * 24 * 60 * 60
+            client_id: clientIdStr
         });
     } catch (error) {
         console.error('[Register] Fatal:', error);
@@ -75,7 +67,7 @@ export const reregister = async (req, res) => {
             return res.status(401).json({ error: 'Invalid admin credentials' });
         }
 
-        const clientResult = await sql`SELECT * FROM clients WHERE client_id = ${client_id}`;
+        const clientResult = await sql`SELECT * FROM endpoints WHERE client_id = ${client_id}`;
         if (clientResult.length === 0) {
             console.warn(`[Reregister] Client not found: ${client_id}`);
             return res.status(404).json({ error: 'Client not found in database. Please register as new machine.' });
@@ -85,7 +77,7 @@ export const reregister = async (req, res) => {
         // We allow reregistration to recover tokens even if not strictly 'deregistered'
 
         await sql`
-            UPDATE clients SET status = 'online', last_seen = CURRENT_TIMESTAMP
+            UPDATE endpoints SET status = 'online', last_seen = CURRENT_TIMESTAMP
             WHERE client_id = ${client_id}
         `;
 
@@ -97,18 +89,10 @@ export const reregister = async (req, res) => {
         broadcastUpdate(client_id, 'client_reregistered');
 
         const hardware = parseHardwareInfo(client.hardware_info);
-        const daemonToken = jwt.sign({
-            client_id,
-            hardware_id: hardware.machine_id || hardware.hostname || client_id,
-            type: 'daemon',
-            iat: Math.floor(Date.now() / 1000)
-        }, DAEMON_JWT_SECRET, { expiresIn: '30d' });
 
         res.json({
             status: 'success',
-            message: 'Client reregistered successfully',
-            token: daemonToken,
-            expires_in: 30 * 24 * 60 * 60
+            message: 'Client reregistered successfully'
         });
     } catch (error) {
         console.error('[Reregister] Fatal error:', error);
@@ -126,7 +110,7 @@ export const uninstall = async (req, res) => {
         if (!admin) return res.status(401).json({ error: 'Invalid admin credentials' });
 
         const updateResult = await sql`
-            UPDATE clients SET status = 'uninstalled', last_seen = CURRENT_TIMESTAMP
+            UPDATE endpoints SET status = 'uninstalled', last_seen = CURRENT_TIMESTAMP
             WHERE client_id = ${client_id}
             RETURNING client_id
         `;
@@ -151,18 +135,18 @@ export const uninstall = async (req, res) => {
 
 export const saveBaseline = async (req, res) => {
     try {
-        const { client_id, root_hash, file_count, directory_path } = req.body;
+        const { client_id, root_hash, tracked_file_count, directory_path } = req.body;
         if (!client_id) return res.status(400).json({ error: 'client_id is required' });
 
         console.log(`[Baseline] Saving for ${client_id} at ${directory_path || 'ROOT'}`);
 
         await sql`
-            INSERT INTO monitored_paths (client_id, directory_path, root_hash, file_count)
-            VALUES (${client_id}, ${directory_path || 'DEFAULT'}, ${root_hash}, ${file_count || 0})
+            INSERT INTO monitored_paths (client_id, directory_path, root_hash, tracked_file_count)
+            VALUES (${client_id}, ${directory_path || 'DEFAULT'}, ${root_hash}, ${tracked_file_count || 0})
             ON CONFLICT (client_id, directory_path) 
             DO UPDATE SET 
                 root_hash = EXCLUDED.root_hash, 
-                file_count = EXCLUDED.file_count, 
+                tracked_file_count = EXCLUDED.tracked_file_count, 
                 updated_at = CURRENT_TIMESTAMP
         `;
 
@@ -175,88 +159,24 @@ export const saveBaseline = async (req, res) => {
 
 export const heartbeat = async (req, res) => {
     try {
-        const { file_count, current_root_hash, boot_id } = req.body;
+        const { tracked_file_count, current_root_hash, boot_id } = req.body;
         const client_id = req.daemon.client_id;
         const now = new Date();
 
         // 1. Update Client Status
         await sql`
-            UPDATE clients 
+            UPDATE endpoints 
             SET last_seen = ${now}, 
                 status = 'online',
                 last_heartbeat = ${now},
-                file_count = ${file_count || 0},
+                tracked_file_count = ${tracked_file_count || 0},
                 last_boot_id = ${boot_id || null},
                 current_root_hash = ${current_root_hash || null}
             WHERE client_id = ${client_id}
         `;
 
         // 2. Real-time Uptime Tracking (Event Driven)
-        // Find the absolute latest uptime record (open or closed)
-        const lastUptime = await sql`
-            SELECT id, state, start_time, end_time 
-            FROM uptime 
-            WHERE client_id = ${client_id}
-            ORDER BY start_time DESC 
-            LIMIT 1
-        `;
-
-        if (lastUptime.length === 0) {
-            // First ever heartbeat
-            await sql`INSERT INTO uptime (client_id, state, start_time, end_time, duration_minutes) VALUES (${client_id}, 'UP', ${now}, ${now}, 0)`;
-        } else {
-            const record = lastUptime[0];
-            const lastEnd = new Date(record.end_time || record.start_time);
-            const gapMs = now - lastEnd;
-            const gapMinutes = gapMs / (1000 * 60);
-
-            if (gapMs <= 0) {
-                // Ignore redundant heartbeat or clock skew
-                console.log(`[Heartbeat] Redundant at ${now.toISOString()}`);
-            } else if (record.state === 'UP') {
-                if (gapMinutes <= 16) { // 15m + buffer
-                    // Extend current session
-                    const newDuration = Math.round((now - new Date(record.start_time)) / (1000 * 60));
-                    await sql`
-                        UPDATE uptime 
-                        SET end_time = ${now}, duration_minutes = ${newDuration}
-                        WHERE id = ${record.id}
-                    `;
-                } else {
-                    // Gap detected (>15m) -> Downtime
-                    // 1. Close old UP session explicitly
-                    const finalUpDuration = Math.max(0, Math.round((lastEnd - new Date(record.start_time)) / (1000 * 60)));
-                    await sql`
-                        UPDATE uptime SET end_time = ${lastEnd}, duration_minutes = ${finalUpDuration}
-                        WHERE id = ${record.id}
-                    `;
-
-                    // 2. Insert DOWN session for the gap
-                    const downDuration = Math.round((now - lastEnd) / (1000 * 60));
-                    await sql`
-                        INSERT INTO uptime (client_id, state, start_time, end_time, duration_minutes)
-                        VALUES (${client_id}, 'DOWN', ${lastEnd}, ${now}, ${downDuration})
-                    `;
-
-                    // 3. Start new UP session
-                    await sql`
-                        INSERT INTO uptime (client_id, state, start_time, end_time, duration_minutes) 
-                        VALUES (${client_id}, 'UP', ${now}, ${now}, 0)
-                    `;
-                }
-            } else {
-                // Last state was DOWN (or other) -> Start new UP
-                // First, ensure any previous record is closed if it was somehow left open
-                if (!record.end_time) {
-                    await sql`UPDATE uptime SET end_time = ${now} WHERE id = ${record.id}`;
-                }
-
-                await sql`
-                    INSERT INTO uptime (client_id, state, start_time, end_time, duration_minutes) 
-                    VALUES (${client_id}, 'UP', ${now}, ${now}, 0)
-                `;
-            }
-        }
+        await processHeartbeatUptime(client_id, now);
 
         // 3. Log raw heartbeat for audit (optional: could delete old ones here to save space)
         await sql`INSERT INTO heartbeats (client_id, timestamp) VALUES (${client_id}, ${now})`;
@@ -283,18 +203,18 @@ export const getClients = async (req, res) => {
         const result = await sql`
       SELECT 
         c.client_id, c.status, c.last_seen, 
-        c.integrity_status, c.current_root_hash, c.last_reviewed_at,
-        c.attestation_valid, c.file_count, c.last_heartbeat, c.last_boot_id,
-        CASE WHEN COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'attestation_failed' THEN 1 END) > 0 THEN 'FAILED' ELSE 'OK' END as attestation_status,
-        COUNT(CASE WHEN e.reviewed = false AND e.event_type NOT IN ('heartbeat', 'heartbeat_missed', 'directory_selected', 'directory_unselected', 'registration', 'deregistration', 'reinstall', 'uninstall', 'attestation_failed') THEN 1 END)::int as integrity_change_count,
+        c.integrity_state, c.current_root_hash, c.last_reviewed_at,
+        c.is_attested, c.tracked_file_count, c.last_heartbeat, c.last_boot_id,
+        CASE WHEN COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'chain_conflict' THEN 1 END) > 0 THEN 'FAILED' ELSE 'OK' END as attestation_status,
+        COUNT(CASE WHEN e.reviewed = false AND e.event_type NOT IN ('heartbeat', 'heartbeat_missed', 'directory_selected', 'directory_unselected', 'registration', 'deregistration', 'reinstall', 'uninstall', 'chain_conflict') THEN 1 END)::int as integrity_change_count,
         COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'heartbeat_missed' THEN 1 END)::int as missed_heartbeat_count,
-        COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'attestation_failed' THEN 1 END)::int as attestation_error_count,
+        COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'chain_conflict' THEN 1 END)::int as attestation_error_count,
         COUNT(CASE WHEN e.reviewed = false THEN 1 END)::int as unreviewed_events,
         MAX(e.timestamp) as last_event
-      FROM clients c
+      FROM endpoints c
       LEFT JOIN events e ON c.client_id = e.client_id
       WHERE c.status != 'uninstalled' 
-      GROUP BY c.client_id, c.status, c.last_seen, c.integrity_status, c.current_root_hash, c.last_reviewed_at, c.attestation_valid, c.file_count, c.last_heartbeat, c.last_boot_id
+      GROUP BY c.client_id, c.status, c.last_seen, c.integrity_state, c.current_root_hash, c.last_reviewed_at, c.is_attested, c.tracked_file_count, c.last_heartbeat, c.last_boot_id
       ORDER BY c.last_seen DESC
     `;
 
@@ -308,7 +228,7 @@ export const getClients = async (req, res) => {
 export const getClientDetails = async (req, res) => {
     try {
         const { client_id } = req.params;
-        const result = await sql`SELECT * FROM clients WHERE client_id = ${client_id}`;
+        const result = await sql`SELECT * FROM endpoints WHERE client_id = ${client_id}`;
         if (result.length === 0) return res.status(404).json({ error: 'Client not found' });
 
         const client = result[0];
@@ -316,7 +236,7 @@ export const getClientDetails = async (req, res) => {
         const integrityCount = await sql`
       SELECT count(*) as count FROM events 
       WHERE client_id = ${client_id} AND reviewed = false 
-        AND event_type NOT IN ('heartbeat', 'heartbeat_missed', 'directory_selected', 'directory_unselected', 'registration', 'deregistration', 'reinstall', 'uninstall', 'attestation_failed')
+        AND event_type NOT IN ('heartbeat', 'heartbeat_missed', 'directory_selected', 'directory_unselected', 'registration', 'deregistration', 'reinstall', 'uninstall', 'chain_conflict')
     `;
 
         const downtimeCount = await sql`
@@ -326,7 +246,7 @@ export const getClientDetails = async (req, res) => {
 
         const attestationFailed = await sql`
       SELECT count(*) as count FROM events 
-      WHERE client_id = ${client_id} AND reviewed = false AND event_type = 'attestation_failed'
+      WHERE client_id = ${client_id} AND reviewed = false AND event_type = 'chain_conflict'
     `;
 
         res.json({
@@ -354,7 +274,7 @@ export const deleteClient = async (req, res) => {
         }
 
         await sql`
-      UPDATE clients SET status = 'deregistered', last_seen = CURRENT_TIMESTAMP
+      UPDATE endpoints SET status = 'deregistered', last_seen = CURRENT_TIMESTAMP
       WHERE client_id = ${client_id}
     `;
 
@@ -385,9 +305,10 @@ export const reviewClient = async (req, res) => {
         `;
 
         await sql`
-            UPDATE clients 
+            UPDATE endpoints 
             SET last_reviewed_at = ${now},
-                attestation_valid = true
+                is_attested = true,
+                integrity_state = 'CLEAN'
             WHERE client_id = ${client_id}
         `;
 

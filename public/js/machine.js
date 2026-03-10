@@ -1,4 +1,4 @@
-import { escapeHtml, checkAuth, logout } from './utils.js';
+import { escapeHtml, checkAuth, logout, showToast } from './utils.js';
 
 /**
  * Main application logic for the Machine Detail View.
@@ -44,11 +44,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
             if (res.ok) {
                 loadApprovalQueue();
+                showToast('Event approved successfully', 'success');
             } else {
-                alert('Failed to approve event');
+                showToast('Failed to approve event', 'error');
             }
         } catch (err) {
-            alert(err.message);
+            showToast(err.message, 'error');
         }
     }
 
@@ -178,7 +179,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
             if (slotEvents.length > 0) {
                 const hasIntegrity = slotEvents.some(e => ['created', 'modified', 'deleted', 'directory_created', 'directory_modified', 'directory_deleted', 'directory_monitored_changed'].includes(e.event_type));
-                const hasAlert = slotEvents.some(e => ['attestation_failed', 'unauthorized_change'].includes(e.event_type));
+                const hasAlert = slotEvents.some(e => ['chain_conflict', 'unauthorized_change'].includes(e.event_type));
 
                 if (hasAlert) {
                     block.style.background = '#2f3542';

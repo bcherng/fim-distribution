@@ -1,4 +1,4 @@
-import { escapeHtml, formatDate, checkAuth, logout } from './utils.js';
+import { escapeHtml, formatDate, checkAuth, logout, showToast } from './utils.js';
 
 /**
  * Main application logic for the FIM Dashboard.
@@ -85,15 +85,17 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         let attestStatus = 'Valid', attestColor = 'green';
-        if (m.attestation_error_count > 0 || m.attestation_valid === false) {
-            attestStatus = 'Failed'; attestColor = 'red';
+        if (m.attestation_error_count > 0 || m.is_attested === false) {
+            attestStatus = 'Conflict'; attestColor = 'red';
         }
 
-        let integStatus = 'Clean', integColor = 'green';
-        if (m.integrity_change_count > 1) {
-            integStatus = `High Activity (${m.integrity_change_count})`; integColor = 'red';
-        } else if (m.integrity_change_count === 1) {
-            integStatus = 'Modified (1)'; integColor = 'yellow';
+        let integStatus = m.integrity_state || 'CLEAN';
+        let integColor = 'green';
+        if (integStatus === 'TAMPERED') {
+            integColor = 'red';
+        } else if (integStatus === 'MODIFIED' || m.integrity_change_count > 0) {
+            integStatus = `Modified (${m.integrity_change_count})`;
+            integColor = 'yellow';
         }
 
         const actionsDisabled = m.status === 'deregistered' ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : '';
@@ -104,11 +106,11 @@ document.addEventListener('DOMContentLoaded', function () {
         } else if (m.status === 'uninstalled') {
             return '';
         } else {
-            removeBtn = `<button onclick="window.initiateRemoval('${m.client_id}')" class="btn-remove" title="Deregister machine">&times;</button>`;
+            removeBtn = `<button onclick="window.initiateRemoval(event, '${m.client_id}')" class="btn-remove" title="Deregister machine">&times;</button>`;
         }
 
         return `
-            <tr data-client-id="${escapeHtml(m.client_id)}" style="${m.status === 'deregistered' ? 'opacity: 0.6;' : ''}">
+            <tr data-client-id="${escapeHtml(m.client_id)}" style="cursor: pointer; ${m.status === 'deregistered' ? 'opacity: 0.6;' : ''}" onclick="window.navigateToMachine(event, '${escapeHtml(m.client_id)}')">
                 <td class="col-name"><div class="machine-name-cell" title="${escapeHtml(m.client_id)}">${escapeHtml(m.client_id)}</div></td>
                 <td class="col-status">
                     <div class="status-wrapper" title="Reachability: ${reachStatus}">
@@ -130,12 +132,25 @@ document.addEventListener('DOMContentLoaded', function () {
                 </td>
                 <td class="col-seen">${formatDate(m.last_seen)}</td>
                 <td class="col-actions">
-                    <button onclick="window.showMachineDetails('${m.client_id}')" class="btn btn-secondary" ${actionsDisabled}>Details</button>
+                    <button onclick="window.showMachineDetails(event, '${m.client_id}')" class="btn btn-secondary" ${actionsDisabled}>Details</button>
                     ${removeBtn}
                 </td>
             </tr>
         `;
     }
+
+    /**
+     * Navigates to the specific machine view on row click.
+     * @param {Event} e - The click event.
+     * @param {string} clientId - The ID of the machine.
+     */
+    window.navigateToMachine = function (e, clientId) {
+        // Don't navigate if clicking on an interactive element inside the row
+        if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
+            return;
+        }
+        window.location.href = `/machine/${encodeURIComponent(clientId)}`;
+    };
 
     /**
      * Renders the entire machine table.
@@ -316,7 +331,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const password = adminPasswordInput.value;
 
         if (!username || !password) {
-            alert('Admin credentials are required for removal.');
+            showToast('Admin credentials are required for removal.', 'error');
             return;
         }
 
@@ -337,14 +352,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
             const data = await response.json();
             if (response.ok) {
-                alert('Machine deregistered. It will stop communicating shortly.');
+                showToast('Machine deregistered. It will stop communicating shortly.', 'success');
                 closeRemovalModal();
                 loadMachines();
             } else {
                 throw new Error(data.error || 'Failed to remove machine');
             }
         } catch (error) {
-            alert(error.message);
+            showToast(error.message, 'error');
         } finally {
             confirmRemovalBtn.disabled = false;
             confirmRemovalBtn.innerHTML = originalBtnText;
@@ -353,9 +368,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
     /**
      * Displays details for a specific machine in a modal.
+     * @param {Event} e - The click event.
      * @param {string} clientId - The ID of the machine to show details for.
      */
-    window.showMachineDetails = function (clientId) {
+    window.showMachineDetails = function (e, clientId) {
+        if (e) e.stopPropagation(); // prevent row click
+
         fetch(`/api/clients/${encodeURIComponent(clientId)}`, {
             headers: { 'Authorization': `Bearer ${token}` }
         })
@@ -366,11 +384,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
                 infoContent.innerHTML = `
                 <div class="info-grid" style="margin-bottom: 20px;">
-                    <h4 style="margin-top:0; margin-bottom:15px; grid-column: 1/-1;">Machine Details Since Last Review: ${formatDate(client.last_reviewed_at)}</h4>
+                    <h4 style="margin-top:0; margin-bottom:15px; grid-column: 1/-1;">Machine Trust & Integrity: ${formatDate(client.last_reviewed_at)}</h4>
                     <div class="info-item"><strong>Reachability</strong> ${client.status}</div>
-                    <div class="info-item"><strong>Downtime Intervals</strong> ${client.missed_heartbeat_count} (15 minute intervals)</div>
-                    <div class="info-item"><strong>Attestation</strong> ${client.attestation_status === 'FAILED' ? '<span style="color:red">FAILED</span>' : 'passed'}</div>
-                    <div class="info-item"><strong>Integrity</strong> ${client.integrity_change_count > 0 ? `${client.integrity_change_count} changes` : 'no changes'}</div>
+                    <div class="info-item"><strong>Downtime Intervals</strong> ${client.missed_heartbeat_count} (15 min)</div>
+                    <div class="info-item"><strong>Trust (Attestation)</strong> ${client.attestation_status === 'FAILED' ? '<span style="color:red">CONFLICT</span>' : '<span style="color:green">VERIFIED</span>'}</div>
+                    <div class="info-item"><strong>Data Integrity</strong> ${client.integrity_state === 'TAMPERED' ? '<span style="color:red">TAMPERED</span>' : (client.integrity_change_count > 0 ? `<span style="color:orange">MODIFIED (${client.integrity_change_count})</span>` : '<span style="color:green">CLEAN</span>')}</div>
                     <div class="info-item"><strong>Root Hash</strong> <code class="hash-code">${client.current_root_hash || 'N/A'}</code></div>
                 </div>
             `;
@@ -380,14 +398,17 @@ document.addEventListener('DOMContentLoaded', function () {
 
                 viewLogsBtn.onclick = () => window.location.href = `/machine/${encodeURIComponent(client.client_id)}`;
             })
-            .catch(err => alert(err.message));
+            .catch(err => showToast(err.message, 'error'));
     };
 
     /**
      * Initiates the machine removal process by showing the confirmation modal.
+     * @param {Event} e - The click event.
      * @param {string} clientId - The ID of the machine to remove.
      */
-    window.initiateRemoval = function (clientId) {
+    window.initiateRemoval = function (e, clientId) {
+        if (e) e.stopPropagation(); // prevent row click
+
         clientToDelete = clientId;
         removalMachineId.textContent = clientId;
         removalModal.style.display = 'block';

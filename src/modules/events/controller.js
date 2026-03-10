@@ -1,121 +1,97 @@
 import { sql } from '../../config/db.js';
 import { broadcastUpdate } from '../../services/broadcast.js';
 import { findMonitoredPath } from '../../utils/monitored_paths.js';
+import { EventService } from '../../services/events.js';
+import crypto from 'crypto';
 
 export const reportEvent = async (req, res) => {
     try {
         const {
             id, event_type, file_path, old_hash, new_hash,
             root_hash, merkle_proof, last_valid_hash, timestamp,
-            file_count
+            tracked_file_count, event_hash, prev_event_hash, signature
         } = req.body;
 
         const client_id = req.daemon.client_id;
         if (!event_type) return res.status(400).json({ error: 'event_type is required' });
 
-        const clientResult = await sql`
-      SELECT current_root_hash, integrity_status FROM clients WHERE client_id = ${client_id}
-    `;
+        const client = await EventService.getClientIntegrity(client_id);
+        let is_attested = true;
 
-        const client = clientResult[0];
-        let attestation_valid = true;
-
+        // --- 1. Attestation Layer ---
         if (client?.current_root_hash && last_valid_hash && client.current_root_hash !== last_valid_hash) {
-            attestation_valid = false;
-            console.warn(`Attestation FAILED for ${client_id}: expected ${client.current_root_hash}, got ${last_valid_hash}`);
+            is_attested = false;
+            console.warn(`Chain Conflict for ${client_id}: expected ${client.current_root_hash}, got ${last_valid_hash}`);
 
-            await sql`
-        UPDATE clients SET attestation_valid = false, last_seen = CURRENT_TIMESTAMP
-        WHERE client_id = ${client_id}
-      `;
+            await EventService.invalidateAttestation(client_id);
 
             return res.status(400).json({
-                error: 'Hash chain mismatch - possible tampering detected',
+                error: 'Hash chain desynchronization detected',
                 expected_hash: client.current_root_hash,
                 received_hash: last_valid_hash
             });
         }
 
-        const existingEvent = await sql`SELECT id FROM events WHERE client_event_id = ${id}`;
-        if (existingEvent?.length > 0) {
+        if (event_hash) {
+            const expectedHash = crypto.createHash('sha256')
+                .update(`${id}${prev_event_hash || ''}${last_valid_hash || ''}${new_hash || ''}`)
+                .digest('hex');
+
+            if (expectedHash !== event_hash) {
+                console.warn(`Attestation Signature Mismatch for ${client_id}. Expected: ${expectedHash}, Got: ${event_hash}`);
+                return res.status(400).json({
+                    error: 'Event hash chaining verification failed',
+                    expected: expectedHash,
+                    received: event_hash
+                });
+            }
+        }
+
+        // --- 2. Integrity Layer --- (Only if Attestation Passed)
+        const existingEventId = await EventService.getDuplicateEventId(id);
+        if (existingEventId) {
             return res.json({
                 status: 'success',
                 message: 'Duplicate event acknowledged',
-                event_id: existingEvent[0].id,
-                validation: { timestamp: new Date().toISOString(), attestation_valid: true }
+                event_id: existingEventId,
+                validation: { timestamp: new Date().toISOString(), is_attested: true }
             });
         }
 
-        const result = await sql`
-      INSERT INTO events (
-        client_event_id, client_id, event_type, file_path, old_hash, new_hash, 
-        root_hash, merkle_proof, last_valid_hash, reviewed, 
-        timestamp, acknowledged
-      )
-      VALUES (
-        ${id}, ${client_id}, ${event_type}, ${file_path}, ${old_hash}, ${new_hash}, 
-        ${root_hash}, ${JSON.stringify(merkle_proof)}, ${last_valid_hash}, 
-        false, ${timestamp || new Date().toISOString()}, false
-      )
-      RETURNING id
-    `;
-
-        const event_id = result[0].id;
+        const event_id = await EventService.insertEvent({
+            id, client_id, event_type, file_path, old_hash, new_hash,
+            root_hash, merkle_proof, last_valid_hash, timestamp,
+            event_hash, prev_event_hash, signature
+        });
 
         if (event_type === 'directory_selected') {
-            await sql`
-        INSERT INTO monitored_paths (client_id, directory_path, root_hash, file_count)
-        VALUES (${client_id}, ${file_path}, ${root_hash}, ${file_count || 0})
-        ON CONFLICT (client_id, directory_path) 
-        DO UPDATE SET 
-            root_hash = EXCLUDED.root_hash, 
-            file_count = EXCLUDED.file_count,
-            updated_at = CURRENT_TIMESTAMP
-      `;
+            await EventService.insertOrUpdateMonitoredPath(client_id, file_path, root_hash, tracked_file_count);
         } else {
             const monitored = await findMonitoredPath(client_id, file_path);
 
             if (!monitored) {
                 console.warn(`Untracked path reported by ${client_id}: ${file_path}`);
             } else if (last_valid_hash !== monitored.root_hash) {
-                attestation_valid = false;
-                console.error(`Attestation FAILED for ${client_id} on ${file_path}: Expected ${monitored.root_hash}, got ${last_valid_hash}`);
+                is_attested = false;
+                console.error(`Local Integrity Desync for ${client_id} on ${file_path}: Expected ${monitored.root_hash}, got ${last_valid_hash}`);
 
-                await sql`
-          INSERT INTO events (client_id, event_type, file_path, old_hash, new_hash, timestamp, reviewed)
-          VALUES (${client_id}, 'attestation_failed', ${file_path}, ${monitored.root_hash}, ${last_valid_hash}, CURRENT_TIMESTAMP, false)
-        `;
-
-                await sql`UPDATE clients SET attestation_valid = false WHERE client_id = ${client_id}`;
+                await EventService.failPathAttestation(client_id, file_path, monitored.root_hash, last_valid_hash);
 
                 return res.status(400).json({
-                    error: 'Hash chain attestation failed',
+                    error: 'Local integrity verification failure',
                     expected: monitored.root_hash,
                     received: last_valid_hash
                 });
             }
         }
 
-        let statusUpdate = sql`
-      UPDATE clients SET last_seen = CURRENT_TIMESTAMP, attestation_valid = ${attestation_valid}
-      WHERE client_id = ${client_id}
-    `;
-
-        if (!['directory_selected', 'directory_unselected'].includes(event_type)) {
-            statusUpdate = sql`
-        UPDATE clients 
-        SET last_seen = CURRENT_TIMESTAMP, attestation_valid = ${attestation_valid}, integrity_status = 'modified'
-        WHERE client_id = ${client_id}
-      `;
-        }
-
-        await statusUpdate;
+        await EventService.updateClientStatusOnEvent(client_id, is_attested, event_type);
 
         res.json({
             status: 'success',
-            message: 'Event verified',
+            message: 'Event verified and recorded',
             event_id: event_id,
-            validation: { timestamp: new Date().toISOString(), attestation_valid, accepted: true, server_recorded: true }
+            validation: { timestamp: new Date().toISOString(), is_attested, accepted: true, server_recorded: true }
         });
 
         broadcastUpdate(client_id, 'event_reported');
@@ -170,7 +146,7 @@ export const acknowledgeEvent = async (req, res) => {
         }
 
         await sql`
-      UPDATE clients 
+      UPDATE endpoints 
       SET current_root_hash = ${event.root_hash},
           last_seen = CURRENT_TIMESTAMP,
           integrity_change_count = integrity_change_count + 1
@@ -255,11 +231,11 @@ export const reviewEvent = async (req, res) => {
 
         if (result.length > 0) {
             const client_id = result[0].client_id;
-            await sql`UPDATE clients SET last_reviewed_at = CURRENT_TIMESTAMP WHERE client_id = ${client_id}`;
+            await sql`UPDATE endpoints SET last_reviewed_at = CURRENT_TIMESTAMP WHERE client_id = ${client_id}`;
 
             const pending = await sql`SELECT count(*) as count FROM events WHERE client_id = ${client_id} AND reviewed = false`;
             if (parseInt(pending[0].count) === 0) {
-                await sql`UPDATE clients SET integrity_status = 'clean' WHERE client_id = ${client_id}`;
+                await sql`UPDATE endpoints SET integrity_state = 'CLEAN' WHERE client_id = ${client_id}`;
             }
         }
 

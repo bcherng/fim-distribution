@@ -8,5 +8,7 @@ router.post('/login', authController.login);
 router.post('/logout', requireAdminAuth, authController.logout);
 router.get('/check', requireAdminAuth, authController.checkAuth);
 router.post('/verify-admin', authController.verifyAdminCredentials);
+router.post('/action-token', authController.actionToken);
+router.post('/verify-action-token', authController.verifyActionToken);
 
 export default router;

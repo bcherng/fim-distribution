@@ -36,8 +36,8 @@
               <tr>
                 <th class="col-name">Machine Name</th>
                 <th class="col-status">Reachability</th>
-                <th class="col-status">Attestation</th>
-                <th class="col-status">Integrity</th>
+                <th class="col-status">Trust (Attestation)</th>
+                <th class="col-status">State (Integrity)</th>
                 <th class="col-seen">Last Seen</th>
                 <th class="col-actions">Actions</th>
               </tr>
@@ -94,6 +94,8 @@
   <footer class="sticky-footer">
     <button onclick="window.location.href='/'" class="btn btn-secondary">Back to Home</button>
   </footer>
+
+  <div id="toastContainer" class="toast-container"></div>
 
   <script src="https://js.pusher.com/8.3.0/pusher.min.js"></script>
   <script type="module" src="js/dashboard.js"></script>
