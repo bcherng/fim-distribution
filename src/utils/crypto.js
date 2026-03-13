@@ -62,6 +62,22 @@ export const getServerKeypair = () => {
 };
 
 /**
+ * Recursively sorts object keys for deterministic JSON serialization.
+ * @param {any} obj - The object to sort.
+ * @returns {any} A new object with keys sorted alphabetically.
+ */
+const recursiveSort = (obj) => {
+    if (obj === null || typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) return obj.map(recursiveSort);
+    const sortedKeys = Object.keys(obj).sort();
+    const result = {};
+    for (const key of sortedKeys) {
+        result[key] = recursiveSort(obj[key]);
+    }
+    return result;
+};
+
+/**
  * Signs a payload using the server's private key with SHA256 and PSS padding.
  * @param {Object|string} payload - The data to sign.
  * @returns {string} Hex-encoded signature.
@@ -69,10 +85,14 @@ export const getServerKeypair = () => {
 export const signPayload = (payload) => {
     const { privateKey } = getServerKeypair();
 
-    // Deterministic stringification to match daemon's verification logic
-    const data = (typeof payload === 'object' && payload !== null)
-        ? JSON.stringify(payload, Object.keys(payload).sort())
-        : String(payload);
+    // Deterministic stringification matching Python's json.dumps(sort_keys=True, separators=(',', ':'))
+    const sortedPayload = (typeof payload === 'object' && payload !== null)
+        ? recursiveSort(payload)
+        : payload;
+
+    const data = (typeof sortedPayload === 'object' && sortedPayload !== null)
+        ? JSON.stringify(sortedPayload)
+        : String(sortedPayload);
 
     const sign = crypto.createSign('SHA256');
     sign.update(data);
