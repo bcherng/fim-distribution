@@ -2,8 +2,12 @@ import { sql } from '../../config/db.js';
 import { broadcastUpdate } from '../../services/broadcast.js';
 import { findMonitoredPath } from '../../utils/monitored_paths.js';
 import { EventService } from '../../services/events.js';
+import { signPayload } from '../../utils/crypto.js';
 import crypto from 'crypto';
 
+/**
+ * Securely report a file integrity event.
+ */
 export const reportEvent = async (req, res) => {
     try {
         const {
@@ -18,18 +22,20 @@ export const reportEvent = async (req, res) => {
         const client = await EventService.getClientIntegrity(client_id);
         let is_attested = true;
 
-        // --- 1. Attestation Layer ---
-        if (client?.current_root_hash && last_valid_hash && client.current_root_hash !== last_valid_hash) {
+        const isLifecycleEvent = ['directory_selected', 'directory_unselected'].includes(event_type);
+
+        if (client?.current_root_hash && last_valid_hash && client.current_root_hash !== last_valid_hash && !isLifecycleEvent) {
             is_attested = false;
-            console.warn(`Chain Conflict for ${client_id}: expected ${client.current_root_hash}, got ${last_valid_hash}`);
 
-            await EventService.invalidateAttestation(client_id);
+            await EventService.failPathAttestation(client_id, file_path || 'GLOBAL', client.current_root_hash, last_valid_hash);
 
-            return res.status(400).json({
+            const response = {
                 error: 'Hash chain desynchronization detected',
                 expected_hash: client.current_root_hash,
                 received_hash: last_valid_hash
-            });
+            };
+            response.signature = signPayload(response);
+            return res.status(400).json(response);
         }
 
         if (event_hash) {
@@ -38,24 +44,26 @@ export const reportEvent = async (req, res) => {
                 .digest('hex');
 
             if (expectedHash !== event_hash) {
-                console.warn(`Attestation Signature Mismatch for ${client_id}. Expected: ${expectedHash}, Got: ${event_hash}`);
-                return res.status(400).json({
+                const response = {
                     error: 'Event hash chaining verification failed',
                     expected: expectedHash,
                     received: event_hash
-                });
+                };
+                response.signature = signPayload(response);
+                return res.status(400).json(response);
             }
         }
 
-        // --- 2. Integrity Layer --- (Only if Attestation Passed)
         const existingEventId = await EventService.getDuplicateEventId(id);
         if (existingEventId) {
-            return res.json({
+            const response = {
                 status: 'success',
                 message: 'Duplicate event acknowledged',
                 event_id: existingEventId,
                 validation: { timestamp: new Date().toISOString(), is_attested: true }
-            });
+            };
+            response.signature = signPayload(response);
+            return res.json(response);
         }
 
         const event_id = await EventService.insertEvent({
@@ -77,22 +85,26 @@ export const reportEvent = async (req, res) => {
 
                 await EventService.failPathAttestation(client_id, file_path, monitored.root_hash, last_valid_hash);
 
-                return res.status(400).json({
+                const response = {
                     error: 'Local integrity verification failure',
                     expected: monitored.root_hash,
                     received: last_valid_hash
-                });
+                };
+                response.signature = signPayload(response);
+                return res.status(400).json(response);
             }
         }
 
         await EventService.updateClientStatusOnEvent(client_id, is_attested, event_type);
 
-        res.json({
+        const response = {
             status: 'success',
             message: 'Event verified and recorded',
             event_id: event_id,
             validation: { timestamp: new Date().toISOString(), is_attested, accepted: true, server_recorded: true }
-        });
+        };
+        response.signature = signPayload(response);
+        res.json(response);
 
         broadcastUpdate(client_id, 'event_reported');
     } catch (error) {
@@ -101,6 +113,9 @@ export const reportEvent = async (req, res) => {
     }
 };
 
+/**
+ * Acknowledge receipt of a validated event from the daemon.
+ */
 export const acknowledgeEvent = async (req, res) => {
     try {
         const { event_id, validation_received } = req.body;
@@ -123,10 +138,12 @@ export const acknowledgeEvent = async (req, res) => {
         const event = eventResult[0];
 
         if (event.acknowledged) {
-            return res.json({
+            const response = {
                 status: 'success',
                 message: 'Already acknowledged'
-            });
+            };
+            response.signature = signPayload(response);
+            return res.json(response);
         }
 
         await sql`
@@ -153,13 +170,13 @@ export const acknowledgeEvent = async (req, res) => {
       WHERE client_id = ${client_id}
     `;
 
-        console.log(`Event ${event_id} acknowledged by ${client_id} - hash updated to ${event.root_hash}`);
-
-        res.json({
+        const response = {
             status: 'success',
             message: 'Acknowledgement received',
             hash_updated: true
-        });
+        };
+        response.signature = signPayload(response);
+        res.json(response);
 
         broadcastUpdate(client_id, 'event_acknowledged');
     } catch (error) {

@@ -3,13 +3,14 @@ import * as endpointsController from './controller.js';
 import * as eventsController from '../events/controller.js';
 import * as uptimeController from '../uptime/controller.js';
 import { requireAdminAuth, requireDaemonAuth } from '../../middleware/auth.js';
+import { validateBody, registrationSchema, heartbeatSchema } from '../../middleware/validation.js';
 
 const router = express.Router();
 
 // Daemon facing routes
-router.post('/register', endpointsController.register);
+router.post('/register', validateBody(registrationSchema), endpointsController.register);
 router.post('/verify', requireDaemonAuth, endpointsController.verify);
-router.post('/heartbeat', requireDaemonAuth, endpointsController.heartbeat);
+router.post('/heartbeat', requireDaemonAuth, validateBody(heartbeatSchema), endpointsController.heartbeat);
 router.post('/baseline', requireDaemonAuth, endpointsController.saveBaseline);
 
 // Admin facing routes

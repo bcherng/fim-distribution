@@ -3,15 +3,17 @@ import { broadcastUpdate } from '../../services/broadcast.js';
 import { parseHardwareInfo } from '../../utils/hardware.js';
 import { verifyAdmin } from '../../utils/admin.js';
 import { processHeartbeatUptime } from '../../services/uptime.js';
+import { signPayload, getServerKeypair } from '../../utils/crypto.js';
 
+/**
+ * Registered a new FIM client endpoint.
+ */
 export const register = async (req, res) => {
     try {
-        console.log(`[Register] Body:`, JSON.stringify(req.body));
         const { client_id: cid1, clientId: cid2, hardware_info, public_key } = req.body;
         const client_id = cid1 || cid2;
 
         if (!client_id || client_id === 'undefined') {
-            console.error(`[Register] Missing identifier`);
             return res.status(400).json({ error: 'client_id is required' });
         }
 
@@ -19,7 +21,6 @@ export const register = async (req, res) => {
         const clientIdStr = String(client_id);
 
         try {
-            console.log(`[Register] DB Insert: ${clientIdStr}`);
             await sql`
                 INSERT INTO endpoints (client_id, hardware_info, status, tracked_file_count, is_attested, public_key)
                 VALUES (${clientIdStr}, ${JSON.stringify(hardware)}, 'online', 0, true, ${public_key || null})
@@ -30,7 +31,6 @@ export const register = async (req, res) => {
                     last_seen = CURRENT_TIMESTAMP,
                     status = 'online'
             `;
-            console.log(`[Register] DB Success for ${clientIdStr}`);
         } catch (dbError) {
             console.error(`[Register] DB Error ${clientIdStr}:`, dbError.message);
             return res.status(500).json({ error: `DB Error: ${dbError.message}` });
@@ -38,13 +38,15 @@ export const register = async (req, res) => {
 
         broadcastUpdate(clientIdStr, 'client_registered');
 
-        broadcastUpdate(clientIdStr, 'client_registered');
-
-        res.json({
+        const response = {
             status: 'success',
             message: 'Client registered successfully',
-            client_id: clientIdStr
-        });
+            client_id: clientIdStr,
+            server_public_key: getServerKeypair().publicKey
+        };
+
+        response.signature = signPayload(response);
+        res.json(response);
     } catch (error) {
         console.error('[Register] Fatal:', error);
         res.status(500).json({ error: 'Internal server error' });
@@ -52,7 +54,9 @@ export const register = async (req, res) => {
 };
 
 export const verify = (req, res) => {
-    res.json({ status: 'success', valid: true });
+    const response = { status: 'success', valid: true };
+    response.signature = signPayload(response);
+    res.json(response);
 };
 
 export const reregister = async (req, res) => {
@@ -90,10 +94,12 @@ export const reregister = async (req, res) => {
 
         const hardware = parseHardwareInfo(client.hardware_info);
 
-        res.json({
+        const response = {
             status: 'success',
             message: 'Client reregistered successfully'
-        });
+        };
+        response.signature = signPayload(response);
+        res.json(response);
     } catch (error) {
         console.error('[Reregister] Fatal error:', error);
         res.status(500).json({ error: 'Internal server error' });
@@ -126,7 +132,9 @@ export const uninstall = async (req, res) => {
         `;
 
         broadcastUpdate(client_id, 'client_uninstalled');
-        res.json({ status: 'success', message: 'Uninstall recorded.' });
+        const response = { status: 'success', message: 'Uninstall recorded.' };
+        response.signature = signPayload(response);
+        res.json(response);
     } catch (error) {
         console.error('[Uninstall] Fatal error:', error);
         res.status(500).json({ error: 'Internal server error' });
@@ -150,20 +158,24 @@ export const saveBaseline = async (req, res) => {
                 updated_at = CURRENT_TIMESTAMP
         `;
 
-        res.json({ status: 'success', message: 'Baseline saved successfully' });
+        const response = { status: 'success', message: 'Baseline saved successfully' };
+        response.signature = signPayload(response);
+        res.json(response);
     } catch (error) {
         console.error('[Baseline] Fatal error:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 };
 
+/**
+ * Processes a heartbeat from a FIM daemon.
+ */
 export const heartbeat = async (req, res) => {
     try {
         const { tracked_file_count, current_root_hash, boot_id } = req.body;
         const client_id = req.daemon.client_id;
         const now = new Date();
 
-        // 1. Update Client Status
         await sql`
             UPDATE endpoints 
             SET last_seen = ${now}, 
@@ -171,23 +183,21 @@ export const heartbeat = async (req, res) => {
                 last_heartbeat = ${now},
                 tracked_file_count = ${tracked_file_count || 0},
                 last_boot_id = ${boot_id || null},
-                current_root_hash = ${current_root_hash || null}
+                current_root_hash = COALESCE(current_root_hash, ${current_root_hash || null})
             WHERE client_id = ${client_id}
         `;
 
-        // 2. Real-time Uptime Tracking (Event Driven)
         await processHeartbeatUptime(client_id, now);
-
-        // 3. Log raw heartbeat for audit (optional: could delete old ones here to save space)
         await sql`INSERT INTO heartbeats (client_id, timestamp) VALUES (${client_id}, ${now})`;
 
-        console.log(`[Heartbeat] Processed for ${client_id}`);
-
-        res.json({
+        const response = {
             status: 'success',
             message: 'Heartbeat received',
             validation: { timestamp: new Date().toISOString(), accepted: true }
-        });
+        };
+
+        response.signature = signPayload(response);
+        res.json(response);
 
         broadcastUpdate(client_id, 'client_heartbeat');
     } catch (error) {
