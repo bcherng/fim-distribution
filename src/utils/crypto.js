@@ -15,25 +15,47 @@ let serverKeys = null;
 export const getServerKeypair = () => {
     if (serverKeys) return serverKeys;
 
-    if (!fs.existsSync(KEY_DIR)) {
-        fs.mkdirSync(KEY_DIR, { recursive: true });
-    }
-
-    if (fs.existsSync(PRIVATE_KEY_PATH) && fs.existsSync(PUBLIC_KEY_PATH)) {
-        const privateKey = fs.readFileSync(PRIVATE_KEY_PATH, 'utf8');
-        const publicKey = fs.readFileSync(PUBLIC_KEY_PATH, 'utf8');
-        serverKeys = { privateKey, publicKey };
+    // 1. Check Environment Variables (Preferred for Serverless/Production)
+    if (process.env.SERVER_PRIVATE_KEY && process.env.SERVER_PUBLIC_KEY) {
+        serverKeys = {
+            privateKey: process.env.SERVER_PRIVATE_KEY.replace(/\\n/g, '\n'),
+            publicKey: process.env.SERVER_PUBLIC_KEY.replace(/\\n/g, '\n')
+        };
         return serverKeys;
     }
 
+    // 2. Check Filesystem (Fallback for Local Development)
+    if (fs.existsSync(PRIVATE_KEY_PATH) && fs.existsSync(PUBLIC_KEY_PATH)) {
+        try {
+            const privateKey = fs.readFileSync(PRIVATE_KEY_PATH, 'utf8');
+            const publicKey = fs.readFileSync(PUBLIC_KEY_PATH, 'utf8');
+            serverKeys = { privateKey, publicKey };
+            return serverKeys;
+        } catch (e) {
+            console.warn('Failed to read keys from disk:', e.message);
+        }
+    }
+
+    // 3. Generate Keys (Last Resort)
     const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
         modulusLength: 2048,
         publicKeyEncoding: { type: 'spki', format: 'pem' },
         privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
     });
 
-    fs.writeFileSync(PRIVATE_KEY_PATH, privateKey, { mode: 0o600 });
-    fs.writeFileSync(PUBLIC_KEY_PATH, publicKey);
+    // 4. Attempt to Persist (Will fail gracefully in read-only environments)
+    try {
+        if (!fs.existsSync(KEY_DIR)) {
+            fs.mkdirSync(KEY_DIR, { recursive: true });
+        }
+        fs.writeFileSync(PRIVATE_KEY_PATH, privateKey, { mode: 0o600 });
+        fs.writeFileSync(PUBLIC_KEY_PATH, publicKey);
+    } catch (e) {
+        // Only log disk write failures in non-production environments
+        if (process.env.NODE_ENV !== 'production') {
+            console.warn('Could not persist keys to disk (expected in serverless):', e.message);
+        }
+    }
 
     serverKeys = { privateKey, publicKey };
     return serverKeys;
