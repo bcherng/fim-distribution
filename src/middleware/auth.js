@@ -68,7 +68,7 @@ export async function requireDaemonAuth(req, res, next) {
                 const isValid = verify.verify({
                     key: client.public_key,
                     padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
-                    saltLength: crypto.constants.RSA_PSS_SALTLEN_MAX
+                    saltLength: 32
                 }, Buffer.from(signature, 'hex'));
 
                 if (!isValid) {

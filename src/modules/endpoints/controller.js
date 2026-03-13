@@ -54,7 +54,11 @@ export const register = async (req, res) => {
 };
 
 export const verify = (req, res) => {
-    const response = { status: 'success', valid: true };
+    const response = {
+        status: 'success',
+        valid: true,
+        server_public_key: getServerKeypair().publicKey
+    };
     response.signature = signPayload(response);
     res.json(response);
 };

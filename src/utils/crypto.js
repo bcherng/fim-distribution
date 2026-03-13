@@ -101,7 +101,7 @@ export const signPayload = (payload) => {
     const signature = sign.sign({
         key: privateKey,
         padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
-        saltLength: crypto.constants.RSA_PSS_SALTLEN_MAX
+        saltLength: 32
     });
 
     return signature.toString('hex');
