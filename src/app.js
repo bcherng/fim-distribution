@@ -15,6 +15,7 @@ import systemRoutes from './modules/system/routes.js';
 const app = express();
 const ROOT_DIR = process.cwd();
 
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(globalLimiter);
 app.use(express.json());

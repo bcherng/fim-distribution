@@ -35,7 +35,8 @@ export const eventSchema = z.object({
     prev_event_hash: z.string().nullable().optional(),
     last_valid_hash: z.string().nullable().optional(),
     signature: z.string().optional(),
-    timestamp: z.string().optional()
+    timestamp: z.string().optional(),
+    tracked_file_count: z.number().int().nonnegative().optional()
 });
 
 /**
