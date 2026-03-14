@@ -13,9 +13,9 @@ export const EventService = {
         `;
     },
 
-    async getDuplicateEventId(client_event_id) {
-        const existingEvent = await sql`SELECT id FROM events WHERE client_event_id = ${client_event_id}`;
-        return existingEvent?.length > 0 ? existingEvent[0].id : null;
+    async getDuplicateEventId(client_event_id, client_id) {
+        const existingEvent = await sql`SELECT id, verification_status FROM events WHERE client_event_id = ${client_event_id} AND client_id = ${client_id}`;
+        return existingEvent?.length > 0 ? existingEvent[0] : null;
     },
 
     async insertEvent(data) {
@@ -56,7 +56,7 @@ export const EventService = {
             VALUES (${client_id}, 'chain_conflict', ${file_path}, ${monitored_hash}, ${received_hash}, CURRENT_TIMESTAMP, false, 'MISMATCH')
             RETURNING id
         `;
-        await sql`UPDATE endpoints SET is_attested = false, integrity_state = 'TAINTED' WHERE client_id = ${client_id}`;
+        await sql`UPDATE endpoints SET is_attested = false, integrity_state = 'TAINTED', last_seen = CURRENT_TIMESTAMP WHERE client_id = ${client_id}`;
         return result[0].id;
     },
 
