@@ -223,10 +223,10 @@ export const getClients = async (req, res) => {
         c.client_id, c.status, c.last_seen, 
         c.integrity_state, c.current_root_hash, c.last_reviewed_at,
         c.is_attested, c.tracked_file_count, c.last_heartbeat, c.last_boot_id,
-        CASE WHEN COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'chain_conflict' THEN 1 END) > 0 THEN 'FAILED' ELSE 'OK' END as attestation_status,
+        CASE WHEN COUNT(CASE WHEN e.reviewed = false AND (e.event_type = 'chain_conflict' OR e.verification_status = 'MISMATCH') THEN 1 END) > 0 THEN 'FAILED' ELSE 'OK' END as attestation_status,
         COUNT(CASE WHEN e.reviewed = false AND e.event_type NOT IN ('heartbeat', 'heartbeat_missed', 'directory_selected', 'directory_unselected', 'registration', 'deregistration', 'reinstall', 'uninstall', 'chain_conflict') THEN 1 END)::int as integrity_change_count,
         COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'heartbeat_missed' THEN 1 END)::int as missed_heartbeat_count,
-        COUNT(CASE WHEN e.reviewed = false AND e.event_type = 'chain_conflict' THEN 1 END)::int as attestation_error_count,
+        COUNT(CASE WHEN e.reviewed = false AND (e.event_type = 'chain_conflict' OR e.verification_status = 'MISMATCH') THEN 1 END)::int as attestation_error_count,
         COUNT(CASE WHEN e.reviewed = false THEN 1 END)::int as unreviewed_events,
         MAX(e.timestamp) as last_event
       FROM endpoints c

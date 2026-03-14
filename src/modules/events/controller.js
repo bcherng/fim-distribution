@@ -19,12 +19,31 @@ export const reportEvent = async (req, res) => {
         const client_id = req.daemon.client_id;
         if (!event_type) return res.status(400).json({ error: 'event_type is required' });
 
+        // 0. Robust Duplicate Check
+        const existingEvent = await EventService.getDuplicateEventId(id, client_id);
+        if (existingEvent) {
+            const endpoint = (await sql`SELECT is_attested FROM endpoints WHERE client_id = ${client_id}`)[0];
+            const response = {
+                status: 'success', // 200 to stop retry loops
+                message: 'Duplicate event acknowledged',
+                event_id: existingEvent.id,
+                verification_status: existingEvent.verification_status,
+                validation: { 
+                    timestamp: new Date().toISOString(), 
+                    is_attested: endpoint?.is_attested ?? true,
+                    accepted: existingEvent.verification_status !== 'MISMATCH' 
+                }
+            };
+            response.signature = signPayload(response);
+            return res.json(response);
+        }
+
         const client = await EventService.getClientIntegrity(client_id);
-        const endpoint = (await sql`SELECT public_key, integrity_state FROM endpoints WHERE client_id = ${client_id}`)[0];
+        const endpoint = (await sql`SELECT public_key, integrity_state, is_attested FROM endpoints WHERE client_id = ${client_id}`)[0];
         
         let verification_status = 'VERIFIED';
         let is_attested = endpoint?.is_attested ?? true;
-        let force_mismatch_response = false;
+        let forensic_triggered = false;
 
         // 1. Verify Device Signature (Witness Check)
         if (endpoint?.public_key) {
@@ -35,19 +54,22 @@ export const reportEvent = async (req, res) => {
                 console.error(`[Security] Signature verification failed for event ${id} from ${client_id}`);
                 verification_status = 'MISMATCH';
                 is_attested = false;
-                force_mismatch_response = true;
+                forensic_triggered = true;
+                
+                // Trigger formal forensic logging for signature failure
+                await EventService.failPathAttestation(client_id, file_path || 'SIGNATURE_FORGERY', 'VALID_KEY', 'INVALID_SIGNATURE');
             }
         }
 
         const isLifecycleEvent = ['directory_selected', 'directory_unselected'].includes(event_type);
 
         // 2. Rolling hash chain check (only if signature was valid or no public key yet)
-        if (!isLifecycleEvent && !force_mismatch_response && client?.last_accepted_event_hash !== null && last_valid_hash) {
+        if (!isLifecycleEvent && !forensic_triggered && client?.last_accepted_event_hash !== null && last_valid_hash) {
             if (client.last_accepted_event_hash !== last_valid_hash) {
                 // MISMATCH DETECTED (Chain break)
                 verification_status = 'MISMATCH';
                 is_attested = false;
-                force_mismatch_response = true;
+                forensic_triggered = true;
                 console.error(`[Integrity] Chain break for ${client_id}: Expected ${client.last_accepted_event_hash}, got ${last_valid_hash}`);
                 
                 await EventService.failPathAttestation(client_id, file_path || 'GLOBAL', client.last_accepted_event_hash, last_valid_hash);
@@ -56,18 +78,6 @@ export const reportEvent = async (req, res) => {
                 verification_status = 'UNVERIFIED';
                 is_attested = false;
             }
-        }
-
-        const existingEventId = await EventService.getDuplicateEventId(id);
-        if (existingEventId) {
-            const response = {
-                status: 'success',
-                message: 'Duplicate event acknowledged',
-                event_id: existingEventId,
-                validation: { timestamp: new Date().toISOString(), is_attested: true }
-            };
-            response.signature = signPayload(response);
-            return res.json(response);
         }
 
         const event_id = await EventService.insertEvent({
@@ -98,30 +108,25 @@ export const reportEvent = async (req, res) => {
             UPDATE endpoints 
             SET last_seen = CURRENT_TIMESTAMP, 
                 is_attested = ${is_attested},
-                integrity_state = ${verification_status === 'MISMATCH' ? 'TAINTED' : (client.integrity_state === 'TAINTED' ? 'TAINTED' : 'MODIFIED')}
+                integrity_state = ${verification_status === 'MISMATCH' ? 'TAINTED' : (endpoint?.integrity_state === 'TAINTED' ? 'TAINTED' : 'MODIFIED')}
             WHERE client_id = ${client_id}
         `;
 
         const response = {
-            status: force_mismatch_response ? 'error' : 'success',
-            message: force_mismatch_response ? 'Hash chain desynchronization detected' : 'Event verified and recorded',
+            status: 'success', // Always return 200 for Witness Mode to stop retry loops
+            message: verification_status === 'MISMATCH' ? 'Integrity alert recorded' : 'Event verified and recorded',
             event_id: event_id,
             verification_status,
             validation: { 
                 timestamp: new Date().toISOString(), 
                 is_attested, 
-                accepted: true, 
+                accepted: verification_status !== 'MISMATCH', 
                 server_recorded: true 
             }
         };
 
         response.signature = signPayload(response);
-        
-        if (force_mismatch_response) {
-            res.status(400).json(response);
-        } else {
-            res.json(response);
-        }
+        res.json(response); // Always 200 OK
 
         broadcastUpdate(client_id, 'event_reported');
     } catch (error) {
