@@ -34,7 +34,6 @@ export const reportEvent = async (req, res) => {
 
                 const response = {
                     error: 'Hash chain desynchronization detected',
-                    expected_hash: client.last_accepted_event_hash,
                     received_hash: last_valid_hash,
                     accepted: false,
                     recorded: true,
@@ -57,7 +56,6 @@ export const reportEvent = async (req, res) => {
 
                 const response = {
                     error: 'Event hash chaining verification failed',
-                    expected: expectedHash,
                     received: event_hash,
                     accepted: false,
                     recorded: true,
@@ -102,7 +100,6 @@ export const reportEvent = async (req, res) => {
 
                 const response = {
                     error: 'Local integrity verification failure',
-                    expected: monitored.root_hash,
                     received: last_valid_hash,
                     accepted: false,
                     recorded: true,
