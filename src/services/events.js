@@ -43,10 +43,10 @@ export const EventService = {
         `;
     },
 
-    async failPathAttestation(client_id, file_path, monitored_hash, received_hash) {
+    async failPathAttestation(client_id, file_path, monitored_hash, received_hash, client_event_id) {
         const result = await sql`
-            INSERT INTO events (client_id, event_type, file_path, old_hash, new_hash, timestamp, reviewed)
-            VALUES (${client_id}, 'mismatch', ${file_path}, ${monitored_hash}, ${received_hash}, CURRENT_TIMESTAMP, false)
+            INSERT INTO events (client_id, event_type, file_path, old_hash, new_hash, timestamp, reviewed, client_event_id)
+            VALUES (${client_id}, 'mismatch', ${file_path}, ${monitored_hash}, ${received_hash}, CURRENT_TIMESTAMP, false, ${client_event_id || null})
             RETURNING id
         `;
         await sql`UPDATE endpoints SET integrity_state = 'TAINTED', last_seen = CURRENT_TIMESTAMP WHERE client_id = ${client_id}`;

@@ -77,7 +77,8 @@ export const reportEvent = async (req, res) => {
                 client_id, 
                 file_path || 'FORENSICS', 
                 forensic_reason === 'CHAIN_BREAK' ? client.last_accepted_event_hash : 'VALID_KEY', 
-                forensic_reason === 'CHAIN_BREAK' ? last_valid_hash : 'INVALID_SIGNATURE'
+                forensic_reason === 'CHAIN_BREAK' ? last_valid_hash : 'INVALID_SIGNATURE',
+                id // Link to the report ID
             );
         }
 
