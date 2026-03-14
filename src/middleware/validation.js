@@ -8,7 +8,7 @@ export const registrationSchema = z.object({
     clientId: z.string().optional(),
     hardware_info: z.union([z.string(), z.record(z.any())]).nullable().optional(),
     public_key: z.string().nullable().optional(),
-    baseline_id: z.string().nullable().optional(),
+    baseline_id: z.union([z.string(), z.number()]).nullable().optional(),
     platform: z.string().nullable().optional()
 }).refine(data => data.client_id || data.clientId, {
     message: "Either client_id or clientId must be provided"
