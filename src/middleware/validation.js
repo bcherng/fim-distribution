@@ -4,8 +4,8 @@ import { z } from 'zod';
  * Schema for client registration payloads.
  */
 export const registrationSchema = z.object({
-    client_id: z.string().optional(),
-    clientId: z.string().optional(),
+    client_id: z.string().nullable().optional(),
+    clientId: z.string().nullable().optional(),
     hardware_info: z.union([z.string(), z.record(z.any())]).nullable().optional(),
     public_key: z.string().nullable().optional(),
     baseline_id: z.union([z.string(), z.number()]).nullable().optional(),
@@ -50,9 +50,11 @@ export const validateBody = (schema) => (req, res, next) => {
         schema.parse(req.body);
         next();
     } catch (error) {
+        console.error('[Validation Error]:', error.errors || error.message);
         return res.status(400).json({
             error: "Invalid request payload",
-            details: error.errors
+            details: error.errors || error.message,
+            received: req.body
         });
     }
 };
