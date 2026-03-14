@@ -24,18 +24,22 @@ export const reportEvent = async (req, res) => {
 
         const isLifecycleEvent = ['directory_selected', 'directory_unselected'].includes(event_type);
 
-        if (client?.current_root_hash && last_valid_hash && client.current_root_hash !== last_valid_hash && !isLifecycleEvent) {
-            is_attested = false;
+        // Rolling hash chain check: compare incoming last_valid_hash against the
+        // last event_hash the server accepted for this client.
+        if (!isLifecycleEvent && client?.last_accepted_event_hash && last_valid_hash) {
+            if (client.last_accepted_event_hash !== last_valid_hash) {
+                is_attested = false;
 
-            await EventService.failPathAttestation(client_id, file_path || 'GLOBAL', client.current_root_hash, last_valid_hash);
+                await EventService.failPathAttestation(client_id, file_path || 'GLOBAL', client.last_accepted_event_hash, last_valid_hash);
 
-            const response = {
-                error: 'Hash chain desynchronization detected',
-                expected_hash: client.current_root_hash,
-                received_hash: last_valid_hash
-            };
-            response.signature = signPayload(response);
-            return res.status(400).json(response);
+                const response = {
+                    error: 'Hash chain desynchronization detected',
+                    expected_hash: client.last_accepted_event_hash,
+                    received_hash: last_valid_hash
+                };
+                response.signature = signPayload(response);
+                return res.status(400).json(response);
+            }
         }
 
         if (event_hash) {
@@ -96,6 +100,11 @@ export const reportEvent = async (req, res) => {
         }
 
         await EventService.updateClientStatusOnEvent(client_id, is_attested, event_type);
+
+        // Advance the rolling chain anchor to this event's hash for the next verification
+        if (event_hash && is_attested) {
+            await EventService.updateLastAcceptedHash(client_id, event_hash);
+        }
 
         const response = {
             status: 'success',

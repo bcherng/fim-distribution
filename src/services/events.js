@@ -2,7 +2,7 @@ import { sql } from '../config/db.js';
 
 export const EventService = {
     async getClientIntegrity(client_id) {
-        const clientResult = await sql`SELECT current_root_hash, integrity_state FROM endpoints WHERE client_id = ${client_id}`;
+        const clientResult = await sql`SELECT current_root_hash, integrity_state, last_accepted_event_hash FROM endpoints WHERE client_id = ${client_id}`;
         return clientResult[0];
     },
 
@@ -54,6 +54,15 @@ export const EventService = {
             VALUES (${client_id}, 'chain_conflict', ${file_path}, ${monitored_hash}, ${received_hash}, CURRENT_TIMESTAMP, false)
         `;
         await sql`UPDATE endpoints SET is_attested = false WHERE client_id = ${client_id}`;
+    },
+
+    async updateLastAcceptedHash(client_id, event_hash) {
+        if (!event_hash) return;
+        await sql`
+            UPDATE endpoints
+            SET last_accepted_event_hash = ${event_hash}
+            WHERE client_id = ${client_id}
+        `;
     },
 
     async updateClientStatusOnEvent(client_id, is_attested, event_type) {
