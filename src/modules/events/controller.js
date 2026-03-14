@@ -2,7 +2,7 @@ import { sql } from '../../config/db.js';
 import { broadcastUpdate } from '../../services/broadcast.js';
 import { findMonitoredPath } from '../../utils/monitored_paths.js';
 import { EventService } from '../../services/events.js';
-import { signPayload } from '../../utils/crypto.js';
+import { signPayload, verifyDeviceSignature } from '../../utils/crypto.js';
 import crypto from 'crypto';
 
 /**
@@ -20,23 +20,38 @@ export const reportEvent = async (req, res) => {
         if (!event_type) return res.status(400).json({ error: 'event_type is required' });
 
         const client = await EventService.getClientIntegrity(client_id);
+        const endpoint = (await sql`SELECT public_key, integrity_state FROM endpoints WHERE client_id = ${client_id}`)[0];
+        
         let verification_status = 'VERIFIED';
-        let is_attested = client?.is_attested ?? true;
+        let is_attested = endpoint?.is_attested ?? true;
         let force_mismatch_response = false;
+
+        // 1. Verify Device Signature (Witness Check)
+        if (endpoint?.public_key) {
+            const payloadStr = `${id}${prev_event_hash || ''}${last_valid_hash || ''}${new_hash || ''}`;
+            const isSigValid = verifyDeviceSignature(payloadStr, signature, endpoint.public_key);
+            
+            if (!isSigValid) {
+                console.error(`[Security] Signature verification failed for event ${id} from ${client_id}`);
+                verification_status = 'MISMATCH';
+                is_attested = false;
+                force_mismatch_response = true;
+            }
+        }
 
         const isLifecycleEvent = ['directory_selected', 'directory_unselected'].includes(event_type);
 
-        // Rolling hash chain check
-        if (!isLifecycleEvent && client?.last_accepted_event_hash !== null && last_valid_hash) {
+        // 2. Rolling hash chain check (only if signature was valid or no public key yet)
+        if (!isLifecycleEvent && !force_mismatch_response && client?.last_accepted_event_hash !== null && last_valid_hash) {
             if (client.last_accepted_event_hash !== last_valid_hash) {
-                // MISMATCH DETECTED
+                // MISMATCH DETECTED (Chain break)
                 verification_status = 'MISMATCH';
                 is_attested = false;
                 force_mismatch_response = true;
                 console.error(`[Integrity] Chain break for ${client_id}: Expected ${client.last_accepted_event_hash}, got ${last_valid_hash}`);
                 
                 await EventService.failPathAttestation(client_id, file_path || 'GLOBAL', client.last_accepted_event_hash, last_valid_hash);
-            } else if (client.integrity_state === 'TAINTED') {
+            } else if (endpoint?.integrity_state === 'TAINTED') {
                 // NO MISMATCH BUT TAINTED
                 verification_status = 'UNVERIFIED';
                 is_attested = false;

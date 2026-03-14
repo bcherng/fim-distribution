@@ -106,3 +106,27 @@ export const signPayload = (payload) => {
 
     return signature.toString('hex');
 };
+
+/**
+ * Verifies a device signature.
+ * @param {string} payloadStr - The raw payload string that was signed.
+ * @param {string} signature - Hex-encoded signature.
+ * @param {string} publicKeyPem - Client's RSA public key in PEM format.
+ * @returns {boolean}
+ */
+export const verifyDeviceSignature = (payloadStr, signature, publicKeyPem) => {
+    try {
+        const verify = crypto.createVerify('SHA256');
+        verify.update(payloadStr);
+        verify.end();
+
+        return verify.verify({
+            key: publicKeyPem,
+            padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+            saltLength: 32
+        }, Buffer.from(signature, 'hex'));
+    } catch (e) {
+        console.error('[Crypto] Verification error:', e.message);
+        return false;
+    }
+};
