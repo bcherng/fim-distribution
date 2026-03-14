@@ -14,7 +14,13 @@ export const register = async (req, res) => {
         const client_id = cid1 || cid2;
 
         if (!client_id || client_id === 'undefined') {
-            return res.status(400).json({ error: 'client_id is required' });
+            return res.status(400).json({ 
+                error: 'client_id is required',
+                received: { 
+                    body: req.body,
+                    headers: req.headers
+                }
+            });
         }
 
         const hardware = parseHardwareInfo(hardware_info);
