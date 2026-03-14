@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { signPayload } from '../utils/crypto.js';
 
 /**
  * Schema for client registration payloads.
@@ -26,7 +27,7 @@ export const heartbeatSchema = z.object({
  */
 export const eventSchema = z.object({
     id: z.union([z.number(), z.string()]),
-    client_id: z.string(),
+    client_id: z.string().optional(),
     event_type: z.string(),
     file_path: z.string(),
     old_hash: z.string().nullable().optional(),
@@ -52,11 +53,13 @@ export const validateBody = (schema) => (req, res, next) => {
         next();
     } catch (error) {
         console.error('[Validation Error]:', error.errors || error.message || error);
-        return res.status(400).json({
+        const response = {
             error: "Invalid request payload",
             details: error.message || "Unknown validation error",
             zodErrors: error.errors,
             received: req.body
-        });
+        };
+        response.signature = signPayload(response);
+        return res.status(400).json(response);
     }
 };
