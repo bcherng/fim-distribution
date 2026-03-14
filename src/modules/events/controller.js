@@ -48,6 +48,9 @@ export const reportEvent = async (req, res) => {
                 .digest('hex');
 
             if (expectedHash !== event_hash) {
+                console.error(`Event hash mismatch for ${client_id} (ID: ${id}): Expected ${expectedHash}, got ${event_hash}`);
+                await EventService.failPathAttestation(client_id, file_path || 'INTERNAL_HASH', client.last_accepted_event_hash || 'none', event_hash);
+
                 const response = {
                     error: 'Event hash chaining verification failed',
                     expected: expectedHash,
@@ -263,7 +266,7 @@ export const reviewEvent = async (req, res) => {
 
             const pending = await sql`SELECT count(*) as count FROM events WHERE client_id = ${client_id} AND reviewed = false`;
             if (parseInt(pending[0].count) === 0) {
-                await sql`UPDATE endpoints SET integrity_state = 'CLEAN' WHERE client_id = ${client_id}`;
+                await sql`UPDATE endpoints SET integrity_state = 'CLEAN', is_attested = true WHERE client_id = ${client_id}`;
             }
         }
 
