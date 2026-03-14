@@ -19,9 +19,12 @@ async function migrate() {
         `ALTER TABLE events ALTER COLUMN root_hash TYPE TEXT`,
         `ALTER TABLE events ALTER COLUMN old_hash TYPE TEXT`,
         `ALTER TABLE events ALTER COLUMN new_hash TYPE TEXT`,
+        `ALTER TABLE events ALTER COLUMN file_path TYPE TEXT`,
         // endpoints table
         `ALTER TABLE endpoints ALTER COLUMN current_root_hash TYPE TEXT`,
         `ALTER TABLE endpoints ALTER COLUMN last_accepted_event_hash TYPE TEXT`,
+        // monitored_paths table
+        `ALTER TABLE monitored_paths ALTER COLUMN directory_path TYPE TEXT`,
     ];
 
     for (const stmt of alterations) {
