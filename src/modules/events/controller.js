@@ -101,9 +101,11 @@ export const reportEvent = async (req, res) => {
 
         await EventService.updateClientStatusOnEvent(client_id, is_attested, event_type);
 
-        // Advance the rolling chain anchor to this event's hash for the next verification
-        if (event_hash && is_attested) {
-            await EventService.updateLastAcceptedHash(client_id, event_hash);
+        // Advance the rolling chain anchor to this event's root_hash.
+        // The client (queue_manager.py) stores root_hash as last_valid_hash after each sync,
+        // so the next event's last_valid_hash will equal this value.
+        if (root_hash && is_attested && !isLifecycleEvent) {
+            await EventService.updateLastAcceptedHash(client_id, root_hash);
         }
 
         const response = {
