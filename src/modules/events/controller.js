@@ -35,10 +35,12 @@ export const reportEvent = async (req, res) => {
                 const response = {
                     error: 'Hash chain desynchronization detected',
                     expected_hash: client.last_accepted_event_hash,
-                    received_hash: last_valid_hash
+                    received_hash: last_valid_hash,
+                    accepted: false,
+                    recorded: true
                 };
                 response.signature = signPayload(response);
-                return res.status(400).json(response);
+                return res.status(200).json(response);
             }
         }
 
@@ -54,10 +56,12 @@ export const reportEvent = async (req, res) => {
                 const response = {
                     error: 'Event hash chaining verification failed',
                     expected: expectedHash,
-                    received: event_hash
+                    received: event_hash,
+                    accepted: false,
+                    recorded: true
                 };
                 response.signature = signPayload(response);
-                return res.status(400).json(response);
+                return res.status(200).json(response);
             }
         }
 
@@ -95,10 +99,12 @@ export const reportEvent = async (req, res) => {
                 const response = {
                     error: 'Local integrity verification failure',
                     expected: monitored.root_hash,
-                    received: last_valid_hash
+                    received: last_valid_hash,
+                    accepted: false,
+                    recorded: true
                 };
                 response.signature = signPayload(response);
-                return res.status(400).json(response);
+                return res.status(200).json(response);
             }
         }
 
