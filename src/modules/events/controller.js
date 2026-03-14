@@ -30,14 +30,16 @@ export const reportEvent = async (req, res) => {
             if (client.last_accepted_event_hash !== last_valid_hash) {
                 is_attested = false;
 
-                await EventService.failPathAttestation(client_id, file_path || 'GLOBAL', client.last_accepted_event_hash, last_valid_hash);
+                const conflict_id = await EventService.failPathAttestation(client_id, file_path || 'GLOBAL', client.last_accepted_event_hash, last_valid_hash);
 
                 const response = {
                     error: 'Hash chain desynchronization detected',
                     expected_hash: client.last_accepted_event_hash,
                     received_hash: last_valid_hash,
                     accepted: false,
-                    recorded: true
+                    recorded: true,
+                    event_id: conflict_id,
+                    validation: { timestamp: new Date().toISOString(), accepted: false }
                 };
                 response.signature = signPayload(response);
                 return res.status(200).json(response);
@@ -51,14 +53,16 @@ export const reportEvent = async (req, res) => {
 
             if (expectedHash !== event_hash) {
                 console.error(`Event hash mismatch for ${client_id} (ID: ${id}): Expected ${expectedHash}, got ${event_hash}`);
-                await EventService.failPathAttestation(client_id, file_path || 'INTERNAL_HASH', client.last_accepted_event_hash || 'none', event_hash);
+                const conflict_id = await EventService.failPathAttestation(client_id, file_path || 'INTERNAL_HASH', client.last_accepted_event_hash || 'none', event_hash);
 
                 const response = {
                     error: 'Event hash chaining verification failed',
                     expected: expectedHash,
                     received: event_hash,
                     accepted: false,
-                    recorded: true
+                    recorded: true,
+                    event_id: conflict_id,
+                    validation: { timestamp: new Date().toISOString(), accepted: false }
                 };
                 response.signature = signPayload(response);
                 return res.status(200).json(response);
@@ -94,14 +98,16 @@ export const reportEvent = async (req, res) => {
                 is_attested = false;
                 console.error(`Local Integrity Desync for ${client_id} on ${file_path}: Expected ${monitored.root_hash}, got ${last_valid_hash}`);
 
-                await EventService.failPathAttestation(client_id, file_path, monitored.root_hash, last_valid_hash);
+                const conflict_id = await EventService.failPathAttestation(client_id, file_path, monitored.root_hash, last_valid_hash);
 
                 const response = {
                     error: 'Local integrity verification failure',
                     expected: monitored.root_hash,
                     received: last_valid_hash,
                     accepted: false,
-                    recorded: true
+                    recorded: true,
+                    event_id: conflict_id,
+                    validation: { timestamp: new Date().toISOString(), accepted: false }
                 };
                 response.signature = signPayload(response);
                 return res.status(200).json(response);

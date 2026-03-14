@@ -49,11 +49,13 @@ export const EventService = {
     },
 
     async failPathAttestation(client_id, file_path, monitored_hash, received_hash) {
-        await sql`
+        const result = await sql`
             INSERT INTO events (client_id, event_type, file_path, old_hash, new_hash, timestamp, reviewed)
             VALUES (${client_id}, 'chain_conflict', ${file_path}, ${monitored_hash}, ${received_hash}, CURRENT_TIMESTAMP, false)
+            RETURNING id
         `;
         await sql`UPDATE endpoints SET is_attested = false WHERE client_id = ${client_id}`;
+        return result[0].id;
     },
 
     async updateLastAcceptedHash(client_id, event_hash) {
