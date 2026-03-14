@@ -114,8 +114,8 @@ document.addEventListener('DOMContentLoaded', function () {
                     <td>${e.event_type}</td>
                     <td title="${escapeHtml(e.file_path)}">${escapeHtml(e.file_path)}</td>
                     <td>
-                        <span class="${e.reviewed ? 'status-reviewed' : 'status-pending'}">
-                            ${e.reviewed ? 'Approved' : 'Pending'}
+                        <span class="${e.verification_status === 'MISMATCH' ? 'status-mismatch' : (e.verification_status === 'UNVERIFIED' ? 'status-unverified' : 'status-verified')}">
+                            ${e.verification_status || 'VERIFIED'}
                         </span>
                     </td>
                 </tr>

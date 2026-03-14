@@ -85,14 +85,17 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         let attestStatus = 'Valid', attestColor = 'green';
-        if (m.attestation_error_count > 0 || m.is_attested === false) {
+        if (m.integrity_state === 'TAINTED') {
+            attestStatus = 'Tainted'; attestColor = 'red';
+        } else if (m.attestation_error_count > 0 || m.is_attested === false) {
             attestStatus = 'Conflict'; attestColor = 'red';
         }
 
         let integStatus = m.integrity_state || 'CLEAN';
         let integColor = 'green';
-        if (integStatus === 'TAMPERED') {
+        if (integStatus === 'TAMPERED' || integStatus === 'TAINTED') {
             integColor = 'red';
+            if (integStatus === 'TAINTED') integStatus = 'Unverified';
         } else if (integStatus === 'MODIFIED' || m.integrity_change_count > 0) {
             integStatus = `Modified (${m.integrity_change_count})`;
             integColor = 'yellow';
@@ -387,8 +390,8 @@ document.addEventListener('DOMContentLoaded', function () {
                     <h4 style="margin-top:0; margin-bottom:15px; grid-column: 1/-1;">Machine Trust & Integrity: ${formatDate(client.last_reviewed_at)}</h4>
                     <div class="info-item"><strong>Reachability</strong> ${client.status}</div>
                     <div class="info-item"><strong>Downtime Intervals</strong> ${client.missed_heartbeat_count} (15 min)</div>
-                    <div class="info-item"><strong>Trust (Attestation)</strong> ${client.attestation_status === 'FAILED' ? '<span style="color:red">CONFLICT</span>' : '<span style="color:green">VERIFIED</span>'}</div>
-                    <div class="info-item"><strong>Data Integrity</strong> ${client.integrity_state === 'TAMPERED' ? '<span style="color:red">TAMPERED</span>' : (client.integrity_change_count > 0 ? `<span style="color:orange">MODIFIED (${client.integrity_change_count})</span>` : '<span style="color:green">CLEAN</span>')}</div>
+                    <div class="info-item"><strong>Trust (Attestation)</strong> ${client.integrity_state === 'TAINTED' ? '<span style="color:red">TAINTED</span>' : (client.attestation_status === 'FAILED' ? '<span style="color:red">CONFLICT</span>' : '<span style="color:green">VERIFIED</span>')}</div>
+                    <div class="info-item"><strong>Data Integrity</strong> ${client.integrity_state === 'TAINTED' ? '<span style="color:red">UNVERIFIED (TAINTED)</span>' : (client.integrity_state === 'TAMPERED' ? '<span style="color:red">TAMPERED</span>' : (client.integrity_change_count > 0 ? `<span style="color:orange">MODIFIED (${client.integrity_change_count})</span>` : '<span style="color:green">CLEAN</span>'))}</div>
                     <div class="info-item"><strong>Root Hash</strong> <code class="hash-code">${client.current_root_hash || 'N/A'}</code></div>
                 </div>
             `;

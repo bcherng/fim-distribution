@@ -23,13 +23,15 @@ export const EventService = {
             INSERT INTO events (
                 client_event_id, client_id, event_type, file_path, old_hash, new_hash, 
                 root_hash, merkle_proof, last_valid_hash, reviewed, 
-                timestamp, acknowledged, event_hash, prev_event_hash, signature
+                timestamp, acknowledged, event_hash, prev_event_hash, signature,
+                verification_status
             )
             VALUES (
                 ${data.id}, ${data.client_id}, ${data.event_type}, ${data.file_path}, ${data.old_hash}, ${data.new_hash}, 
                 ${data.root_hash}, ${JSON.stringify(data.merkle_proof)}, ${data.last_valid_hash}, 
                 false, ${data.timestamp || new Date().toISOString()}, false,
-                ${data.event_hash || null}, ${data.prev_event_hash || null}, ${data.signature || null}
+                ${data.event_hash || null}, ${data.prev_event_hash || null}, ${data.signature || null},
+                ${data.verification_status || 'VERIFIED'}
             )
             RETURNING id
         `;
@@ -50,11 +52,11 @@ export const EventService = {
 
     async failPathAttestation(client_id, file_path, monitored_hash, received_hash) {
         const result = await sql`
-            INSERT INTO events (client_id, event_type, file_path, old_hash, new_hash, timestamp, reviewed)
-            VALUES (${client_id}, 'chain_conflict', ${file_path}, ${monitored_hash}, ${received_hash}, CURRENT_TIMESTAMP, false)
+            INSERT INTO events (client_id, event_type, file_path, old_hash, new_hash, timestamp, reviewed, verification_status)
+            VALUES (${client_id}, 'chain_conflict', ${file_path}, ${monitored_hash}, ${received_hash}, CURRENT_TIMESTAMP, false, 'MISMATCH')
             RETURNING id
         `;
-        await sql`UPDATE endpoints SET is_attested = false WHERE client_id = ${client_id}`;
+        await sql`UPDATE endpoints SET is_attested = false, integrity_state = 'TAINTED' WHERE client_id = ${client_id}`;
         return result[0].id;
     },
 

@@ -20,50 +20,26 @@ export const reportEvent = async (req, res) => {
         if (!event_type) return res.status(400).json({ error: 'event_type is required' });
 
         const client = await EventService.getClientIntegrity(client_id);
-        let is_attested = true;
+        let verification_status = 'VERIFIED';
+        let is_attested = client?.is_attested ?? true;
+        let force_mismatch_response = false;
 
         const isLifecycleEvent = ['directory_selected', 'directory_unselected'].includes(event_type);
 
-        // Rolling hash chain check: compare incoming last_valid_hash against the
-        // last event_hash the server accepted for this client.
+        // Rolling hash chain check
         if (!isLifecycleEvent && client?.last_accepted_event_hash !== null && last_valid_hash) {
             if (client.last_accepted_event_hash !== last_valid_hash) {
+                // MISMATCH DETECTED
+                verification_status = 'MISMATCH';
                 is_attested = false;
-
-                const conflict_id = await EventService.failPathAttestation(client_id, file_path || 'GLOBAL', client.last_accepted_event_hash, last_valid_hash);
-
-                const response = {
-                    error: 'Hash chain desynchronization detected',
-                    received_hash: last_valid_hash,
-                    accepted: false,
-                    recorded: true,
-                    event_id: conflict_id,
-                    validation: { timestamp: new Date().toISOString(), accepted: false }
-                };
-                response.signature = signPayload(response);
-                return res.status(200).json(response);
-            }
-        }
-
-        if (event_hash) {
-            const expectedHash = crypto.createHash('sha256')
-                .update(`${id}${prev_event_hash || ''}${last_valid_hash || ''}${new_hash || ''}`)
-                .digest('hex');
-
-            if (expectedHash !== event_hash) {
-                console.error(`Event hash mismatch for ${client_id} (ID: ${id}): Expected ${expectedHash}, got ${event_hash}`);
-                const conflict_id = await EventService.failPathAttestation(client_id, file_path || 'INTERNAL_HASH', client.last_accepted_event_hash || 'none', event_hash);
-
-                const response = {
-                    error: 'Event hash chaining verification failed',
-                    received: event_hash,
-                    accepted: false,
-                    recorded: true,
-                    event_id: conflict_id,
-                    validation: { timestamp: new Date().toISOString(), accepted: false }
-                };
-                response.signature = signPayload(response);
-                return res.status(200).json(response);
+                force_mismatch_response = true;
+                console.error(`[Integrity] Chain break for ${client_id}: Expected ${client.last_accepted_event_hash}, got ${last_valid_hash}`);
+                
+                await EventService.failPathAttestation(client_id, file_path || 'GLOBAL', client.last_accepted_event_hash, last_valid_hash);
+            } else if (client.integrity_state === 'TAINTED') {
+                // NO MISMATCH BUT TAINTED
+                verification_status = 'UNVERIFIED';
+                is_attested = false;
             }
         }
 
@@ -82,58 +58,55 @@ export const reportEvent = async (req, res) => {
         const event_id = await EventService.insertEvent({
             id, client_id, event_type, file_path, old_hash, new_hash,
             root_hash, merkle_proof, last_valid_hash, timestamp,
-            event_hash, prev_event_hash, signature
+            event_hash, prev_event_hash, signature,
+            verification_status
         });
 
         if (event_type === 'directory_selected') {
             await EventService.insertOrUpdateMonitoredPath(client_id, file_path, root_hash, tracked_file_count);
-        } else {
-            const monitored = await findMonitoredPath(client_id, file_path);
-
-            if (!monitored) {
-                console.warn(`Untracked path reported by ${client_id}: ${file_path}`);
-            } else if (monitored.root_hash !== null && last_valid_hash !== monitored.root_hash) {
-                is_attested = false;
-                console.error(`Local Integrity Desync for ${client_id} on ${file_path}: Expected ${monitored.root_hash}, got ${last_valid_hash}`);
-
-                const conflict_id = await EventService.failPathAttestation(client_id, file_path, monitored.root_hash, last_valid_hash);
-
-                const response = {
-                    error: 'Local integrity verification failure',
-                    received: last_valid_hash,
-                    accepted: false,
-                    recorded: true,
-                    event_id: conflict_id,
-                    validation: { timestamp: new Date().toISOString(), accepted: false }
-                };
-                response.signature = signPayload(response);
-                return res.status(200).json(response);
-            }
-
+        } else if (!isLifecycleEvent) {
             // NEW: If existing root_hash is NULL (from administrative reset), baseline it
+            const monitored = await findMonitoredPath(client_id, file_path);
             if (monitored && monitored.root_hash === null) {
                 console.log(`[Integrity] Establishing new administrative baseline for ${file_path} at ${last_valid_hash}`);
                 await EventService.insertOrUpdateMonitoredPath(client_id, file_path, last_valid_hash, tracked_file_count);
             }
         }
 
-        await EventService.updateClientStatusOnEvent(client_id, is_attested, event_type);
-
-        // Advance the rolling chain anchor to this event's root_hash.
-        // The client (queue_manager.py) stores root_hash as last_valid_hash after each sync,
-        // so the next event's last_valid_hash will equal this value.
-        if (root_hash && is_attested && !isLifecycleEvent) {
+        // Advance the chain anchor (Snap-back/Heal happens automatically by updating this)
+        if (root_hash && !isLifecycleEvent) {
             await EventService.updateLastAcceptedHash(client_id, root_hash);
         }
 
+        // Update endpoint metadata
+        await sql`
+            UPDATE endpoints 
+            SET last_seen = CURRENT_TIMESTAMP, 
+                is_attested = ${is_attested},
+                integrity_state = ${verification_status === 'MISMATCH' ? 'TAINTED' : (client.integrity_state === 'TAINTED' ? 'TAINTED' : 'MODIFIED')}
+            WHERE client_id = ${client_id}
+        `;
+
         const response = {
-            status: 'success',
-            message: 'Event verified and recorded',
+            status: force_mismatch_response ? 'error' : 'success',
+            message: force_mismatch_response ? 'Hash chain desynchronization detected' : 'Event verified and recorded',
             event_id: event_id,
-            validation: { timestamp: new Date().toISOString(), is_attested, accepted: true, server_recorded: true }
+            verification_status,
+            validation: { 
+                timestamp: new Date().toISOString(), 
+                is_attested, 
+                accepted: true, 
+                server_recorded: true 
+            }
         };
+
         response.signature = signPayload(response);
-        res.json(response);
+        
+        if (force_mismatch_response) {
+            res.status(400).json(response);
+        } else {
+            res.json(response);
+        }
 
         broadcastUpdate(client_id, 'event_reported');
     } catch (error) {

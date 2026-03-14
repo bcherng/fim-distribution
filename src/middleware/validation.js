@@ -10,8 +10,6 @@ export const registrationSchema = z.object({
     public_key: z.string().nullable().optional(),
     baseline_id: z.union([z.string(), z.number()]).nullable().optional(),
     platform: z.string().nullable().optional()
-}).refine(data => data.client_id || data.clientId, {
-    message: "Either client_id or clientId must be provided"
 });
 
 /**
@@ -47,13 +45,17 @@ export const eventSchema = z.object({
  */
 export const validateBody = (schema) => (req, res, next) => {
     try {
+        if (!schema || typeof schema.parse !== 'function') {
+             throw new Error("Invalid schema provided to validateBody");
+        }
         schema.parse(req.body);
         next();
     } catch (error) {
-        console.error('[Validation Error]:', error.errors || error.message);
+        console.error('[Validation Error]:', error.errors || error.message || error);
         return res.status(400).json({
             error: "Invalid request payload",
-            details: error.errors || error.message,
+            details: error.message || "Unknown validation error",
+            zodErrors: error.errors,
             received: req.body
         });
     }
