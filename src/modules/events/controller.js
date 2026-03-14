@@ -26,7 +26,7 @@ export const reportEvent = async (req, res) => {
 
         // Rolling hash chain check: compare incoming last_valid_hash against the
         // last event_hash the server accepted for this client.
-        if (!isLifecycleEvent && client?.last_accepted_event_hash && last_valid_hash) {
+        if (!isLifecycleEvent && client?.last_accepted_event_hash !== null && last_valid_hash) {
             if (client.last_accepted_event_hash !== last_valid_hash) {
                 is_attested = false;
 
@@ -92,7 +92,7 @@ export const reportEvent = async (req, res) => {
 
             if (!monitored) {
                 console.warn(`Untracked path reported by ${client_id}: ${file_path}`);
-            } else if (last_valid_hash !== monitored.root_hash) {
+            } else if (monitored.root_hash !== null && last_valid_hash !== monitored.root_hash) {
                 is_attested = false;
                 console.error(`Local Integrity Desync for ${client_id} on ${file_path}: Expected ${monitored.root_hash}, got ${last_valid_hash}`);
 
@@ -108,6 +108,12 @@ export const reportEvent = async (req, res) => {
                 };
                 response.signature = signPayload(response);
                 return res.status(200).json(response);
+            }
+
+            // NEW: If existing root_hash is NULL (from administrative reset), baseline it
+            if (monitored && monitored.root_hash === null) {
+                console.log(`[Integrity] Establishing new administrative baseline for ${file_path} at ${last_valid_hash}`);
+                await EventService.insertOrUpdateMonitoredPath(client_id, file_path, last_valid_hash, tracked_file_count);
             }
         }
 
