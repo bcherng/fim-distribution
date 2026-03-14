@@ -22,16 +22,13 @@ export const reportEvent = async (req, res) => {
         // 0. Robust Duplicate Check
         const existingEvent = await EventService.getDuplicateEventId(id, client_id);
         if (existingEvent) {
-            const endpoint = (await sql`SELECT is_attested FROM endpoints WHERE client_id = ${client_id}`)[0];
-            const response = {
-                status: 'success', // 200 to stop retry loops
+             const response = {
+                status: 'success',
                 message: 'Duplicate event acknowledged',
                 event_id: existingEvent.id,
-                verification_status: existingEvent.verification_status,
                 validation: { 
                     timestamp: new Date().toISOString(), 
-                    is_attested: endpoint?.is_attested ?? true,
-                    accepted: existingEvent.verification_status !== 'MISMATCH' 
+                    accepted: true 
                 }
             };
             response.signature = signPayload(response);
@@ -39,11 +36,10 @@ export const reportEvent = async (req, res) => {
         }
 
         const client = await EventService.getClientIntegrity(client_id);
-        const endpoint = (await sql`SELECT public_key, integrity_state, is_attested FROM endpoints WHERE client_id = ${client_id}`)[0];
+        const endpoint = (await sql`SELECT public_key, integrity_state FROM endpoints WHERE client_id = ${client_id}`)[0];
         
-        let verification_status = 'VERIFIED';
-        let is_attested = endpoint?.is_attested ?? true;
-        let forensic_triggered = false;
+        let holds_integrity = true;
+        let forensic_reason = null;
 
         // 1. Verify Device Signature (Witness Check)
         if (endpoint?.public_key) {
@@ -52,53 +48,49 @@ export const reportEvent = async (req, res) => {
             
             if (!isSigValid) {
                 console.error(`[Security] Signature verification failed for event ${id} from ${client_id}`);
-                verification_status = 'MISMATCH';
-                is_attested = false;
-                forensic_triggered = true;
-                
-                // Trigger formal forensic logging for signature failure
-                await EventService.failPathAttestation(client_id, file_path || 'SIGNATURE_FORGERY', 'VALID_KEY', 'INVALID_SIGNATURE');
+                holds_integrity = false;
+                forensic_reason = 'SIGNATURE_MISMATCH';
             }
         }
 
         const isLifecycleEvent = ['directory_selected', 'directory_unselected'].includes(event_type);
 
-        // 2. Rolling hash chain check (only if signature was valid or no public key yet)
-        if (!isLifecycleEvent && !forensic_triggered && client?.last_accepted_event_hash !== null && last_valid_hash) {
+        // 2. Rolling hash chain check
+        if (!isLifecycleEvent && holds_integrity && client?.last_accepted_event_hash !== null && last_valid_hash) {
             if (client.last_accepted_event_hash !== last_valid_hash) {
-                // MISMATCH DETECTED (Chain break)
-                verification_status = 'MISMATCH';
-                is_attested = false;
-                forensic_triggered = true;
+                holds_integrity = false;
+                forensic_reason = 'CHAIN_BREAK';
                 console.error(`[Integrity] Chain break for ${client_id}: Expected ${client.last_accepted_event_hash}, got ${last_valid_hash}`);
-                
-                await EventService.failPathAttestation(client_id, file_path || 'GLOBAL', client.last_accepted_event_hash, last_valid_hash);
-            } else if (endpoint?.integrity_state === 'TAINTED') {
-                // NO MISMATCH BUT TAINTED
-                verification_status = 'UNVERIFIED';
-                is_attested = false;
             }
         }
 
+        // 3. Insert original witness event
         const event_id = await EventService.insertEvent({
             id, client_id, event_type, file_path, old_hash, new_hash,
             root_hash, merkle_proof, last_valid_hash, timestamp,
-            event_hash, prev_event_hash, signature,
-            verification_status
+            event_hash, prev_event_hash, signature
         });
+
+        // 4. Insert separate forensic event if needed
+        if (!holds_integrity) {
+             await EventService.failPathAttestation(
+                client_id, 
+                file_path || 'FORENSICS', 
+                forensic_reason === 'CHAIN_BREAK' ? client.last_accepted_event_hash : 'VALID_KEY', 
+                forensic_reason === 'CHAIN_BREAK' ? last_valid_hash : 'INVALID_SIGNATURE'
+            );
+        }
 
         if (event_type === 'directory_selected') {
             await EventService.insertOrUpdateMonitoredPath(client_id, file_path, root_hash, tracked_file_count);
         } else if (!isLifecycleEvent) {
-            // NEW: If existing root_hash is NULL (from administrative reset), baseline it
             const monitored = await findMonitoredPath(client_id, file_path);
             if (monitored && monitored.root_hash === null) {
-                console.log(`[Integrity] Establishing new administrative baseline for ${file_path} at ${last_valid_hash}`);
                 await EventService.insertOrUpdateMonitoredPath(client_id, file_path, last_valid_hash, tracked_file_count);
             }
         }
 
-        // Advance the chain anchor (Snap-back/Heal happens automatically by updating this)
+        // Advance the chain anchor (Heal happens by accepting the report as witness)
         if (root_hash && !isLifecycleEvent) {
             await EventService.updateLastAcceptedHash(client_id, root_hash);
         }
@@ -107,26 +99,23 @@ export const reportEvent = async (req, res) => {
         await sql`
             UPDATE endpoints 
             SET last_seen = CURRENT_TIMESTAMP, 
-                is_attested = ${is_attested},
-                integrity_state = ${verification_status === 'MISMATCH' ? 'TAINTED' : (endpoint?.integrity_state === 'TAINTED' ? 'TAINTED' : 'MODIFIED')}
+                integrity_state = ${holds_integrity ? (endpoint?.integrity_state === 'TAINTED' ? 'TAINTED' : 'MODIFIED') : 'TAINTED'}
             WHERE client_id = ${client_id}
         `;
 
         const response = {
-            status: 'success', // Always return 200 for Witness Mode to stop retry loops
-            message: verification_status === 'MISMATCH' ? 'Integrity alert recorded' : 'Event verified and recorded',
+            status: 'success',
+            message: holds_integrity ? 'Event recorded' : 'Event recorded (Forensic Alert generated)',
             event_id: event_id,
-            verification_status,
             validation: { 
                 timestamp: new Date().toISOString(), 
-                is_attested, 
-                accepted: verification_status !== 'MISMATCH', 
-                server_recorded: true 
+                accepted: true,
+                forensic_alert: !holds_integrity
             }
         };
 
         response.signature = signPayload(response);
-        res.json(response); // Always 200 OK
+        res.json(response);
 
         broadcastUpdate(client_id, 'event_reported');
     } catch (error) {
@@ -272,9 +261,12 @@ export const reviewEvent = async (req, res) => {
             const client_id = result[0].client_id;
             await sql`UPDATE endpoints SET last_reviewed_at = CURRENT_TIMESTAMP WHERE client_id = ${client_id}`;
 
-            const pending = await sql`SELECT count(*) as count FROM events WHERE client_id = ${client_id} AND reviewed = false`;
-            if (parseInt(pending[0].count) === 0) {
-                await sql`UPDATE endpoints SET integrity_state = 'CLEAN', is_attested = true WHERE client_id = ${client_id}`;
+            // Machine returns to CLEAN if NO unreviewed mismatches remain
+            const pendingMismatches = await sql`SELECT count(*)::int as count FROM events WHERE client_id = ${client_id} AND reviewed = false AND event_type = 'mismatch'`;
+            
+            if (pendingMismatches[0].count === 0) {
+                console.log(`[Integrity] All mismatches reviewed for ${client_id}. Resetting state to CLEAN.`);
+                await sql`UPDATE endpoints SET integrity_state = 'CLEAN' WHERE client_id = ${client_id}`;
             }
         }
 
