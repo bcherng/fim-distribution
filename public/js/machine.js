@@ -111,11 +111,11 @@ document.addEventListener('DOMContentLoaded', function () {
             logTableBody.innerHTML = events.map(e => `
                 <tr>
                     <td>${new Date(e.timestamp).toLocaleString()}</td>
-                    <td>${e.event_type}</td>
+                    <td><span style="color: ${e.event_type === 'mismatch' ? '#e74c3c; font-weight: bold;' : 'inherit'};">${e.event_type.toUpperCase()}</span></td>
                     <td title="${escapeHtml(e.payload?.file_path || 'N/A')}">${escapeHtml(e.payload?.file_path || 'N/A')}</td>
                     <td>
-                        <span class="${e.event_type === 'mismatch' ? 'status-mismatch' : 'status-verified'}">
-                            ${e.event_type === 'mismatch' ? 'MISMATCH' : 'OK'}
+                        <span class="${e.reviewed ? 'status-verified' : 'status-pending'}" style="${!e.reviewed ? 'color: #f39c12; font-weight: bold; border: 1px solid #f39c12; padding: 2px 6px; border-radius: 4px;' : 'border: 1px solid #2ecc71; padding: 2px 6px; border-radius: 4px;'}">
+                            ${e.reviewed ? 'APPROVED' : 'PENDING'}
                         </span>
                     </td>
                 </tr>

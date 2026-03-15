@@ -185,8 +185,7 @@ export const acknowledgeEvent = async (req, res) => {
         await sql`
       UPDATE endpoints 
       SET current_root_hash = ${event.payload?.root_hash},
-          last_seen = CURRENT_TIMESTAMP,
-          integrity_change_count = integrity_change_count + 1
+          last_seen = CURRENT_TIMESTAMP
       WHERE client_id = ${client_id}
     `;
 
