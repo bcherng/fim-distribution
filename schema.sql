@@ -13,6 +13,7 @@ CREATE TABLE endpoints (
     current_root_hash TEXT,                -- Latest globally accepted root hash
     last_accepted_event_hash TEXT,         -- Anchor for the rolling hash chain
     tracked_file_count INTEGER DEFAULT 0,
+    integrity_change_count INTEGER DEFAULT 0,
     last_boot_id TEXT,
     last_reviewed_at TIMESTAMP
 );
