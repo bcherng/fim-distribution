@@ -78,3 +78,14 @@ CREATE TABLE heartbeats (
     client_id TEXT REFERENCES endpoints(client_id),
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Uptime/Downtime Tracking
+CREATE TABLE uptime (
+    id SERIAL PRIMARY KEY,
+    client_id TEXT REFERENCES endpoints(client_id),
+    state TEXT NOT NULL,                  -- UP, DOWN
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP,
+    duration_minutes INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
