@@ -23,14 +23,7 @@ CREATE TABLE events (
     client_id TEXT REFERENCES endpoints(client_id),
     client_event_id TEXT,                  -- UID from the daemon
     event_type TEXT NOT NULL,               -- modified, created, deleted, mismatch, heartbeat_missed
-    file_path TEXT,
-    old_hash TEXT,
-    new_hash TEXT,
-    root_hash TEXT,                        -- Resulting Merkle root
-    merkle_proof JSONB,
-    last_valid_hash TEXT,                  -- The previous hash the daemon claimed to build upon
-    event_hash TEXT,                       -- The cumulative hash of this event
-    prev_event_hash TEXT,                  -- The hash of the actual previous event in the chain
+    payload JSONB,                         -- Flexible storage for all event data, hashes, and forensic context
     signature TEXT,                        -- Witness signature from the device
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     reviewed BOOLEAN DEFAULT FALSE,        -- Admin review status

@@ -78,8 +78,8 @@ document.addEventListener('DOMContentLoaded', function () {
                     <h3>Pending Change (${remainingCount + 1} total)</h3>
                     <p><strong>Timestamp:</strong> ${new Date(currentEvent.timestamp).toLocaleString()}</p>
                     <p><strong>Type:</strong> ${currentEvent.event_type.toUpperCase()}</p>
-                    <p><strong>File:</strong> ${escapeHtml(currentEvent.file_path)}</p>
-                    <p><strong>Hash:</strong> <code>${currentEvent.new_hash ? currentEvent.new_hash.substring(0, 16) + '...' : 'N/A'}</code></p>
+                    <p><strong>File:</strong> ${escapeHtml(currentEvent.payload?.file_path || 'N/A')}</p>
+                    <p><strong>Hash:</strong> <code>${currentEvent.payload?.new_hash ? currentEvent.payload.new_hash.substring(0, 16) + '...' : 'N/A'}</code></p>
                     
                     <div class="approval-actions">
                         <button id="approveBtn" class="btn btn-success" style="background:#2ecc71; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">
@@ -112,7 +112,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 <tr>
                     <td>${new Date(e.timestamp).toLocaleString()}</td>
                     <td>${e.event_type}</td>
-                    <td title="${escapeHtml(e.file_path)}">${escapeHtml(e.file_path)}</td>
+                    <td title="${escapeHtml(e.payload?.file_path || 'N/A')}">${escapeHtml(e.payload?.file_path || 'N/A')}</td>
                     <td>
                         <span class="${e.event_type === 'mismatch' ? 'status-mismatch' : 'status-verified'}">
                             ${e.event_type === 'mismatch' ? 'MISMATCH' : 'OK'}

@@ -22,17 +22,17 @@ export const EventService = {
     },
 
     async insertEvent(data) {
+        // Strip out fields that are top-level columns to avoid duplication in payload
+        const { id, client_id, event_type, timestamp, signature, ...payloadData } = data;
+        
         const result = await sql`
             INSERT INTO events (
-                client_event_id, client_id, event_type, file_path, old_hash, new_hash, 
-                root_hash, merkle_proof, last_valid_hash, reviewed, 
-                timestamp, acknowledged, event_hash, prev_event_hash, signature
+                client_event_id, client_id, event_type, payload, 
+                reviewed, timestamp, acknowledged, signature
             )
             VALUES (
-                ${data.id}, ${data.client_id}, ${data.event_type}, ${data.file_path}, ${data.old_hash}, ${data.new_hash}, 
-                ${data.root_hash}, ${JSON.stringify(data.merkle_proof)}, ${data.last_valid_hash}, 
-                false, ${data.timestamp || new Date().toISOString()}, false,
-                ${data.event_hash || null}, ${data.prev_event_hash || null}, ${data.signature || null}
+                ${data.id}, ${data.client_id}, ${data.event_type}, ${JSON.stringify(payloadData)}, 
+                false, ${data.timestamp || new Date().toISOString()}, false, ${data.signature || null}
             )
             RETURNING id
         `;
@@ -52,9 +52,15 @@ export const EventService = {
     },
 
     async failPathAttestation(client_id, file_path, monitored_hash, received_hash, client_event_id) {
+        const payload = {
+            file_path: file_path,
+            expected_hash: monitored_hash,
+            received_hash: received_hash,
+            reason: 'SIGNATURE_MISMATCH'
+        };
         const result = await sql`
-            INSERT INTO events (client_id, event_type, file_path, old_hash, new_hash, timestamp, reviewed, client_event_id)
-            VALUES (${client_id}, 'mismatch', ${file_path}, ${monitored_hash}, ${received_hash}, CURRENT_TIMESTAMP, false, ${client_event_id || null})
+            INSERT INTO events (client_id, event_type, payload, timestamp, reviewed, client_event_id)
+            VALUES (${client_id}, 'mismatch', ${JSON.stringify(payload)}, CURRENT_TIMESTAMP, false, ${client_event_id || null})
             RETURNING id
         `;
         await sql`UPDATE endpoints SET integrity_state = 'TAINTED', last_seen = CURRENT_TIMESTAMP WHERE client_id = ${client_id}`;

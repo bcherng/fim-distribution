@@ -22,13 +22,13 @@ export const reportEvent = async (req, res) => {
         // 0. Robust Duplicate Check
         const existingEvent = await EventService.getDuplicateEventId(id, client_id);
         if (existingEvent) {
-             const response = {
+            const response = {
                 status: 'success',
                 message: 'Duplicate event acknowledged',
                 event_id: existingEvent.id,
-                validation: { 
-                    timestamp: new Date().toISOString(), 
-                    accepted: true 
+                validation: {
+                    timestamp: new Date().toISOString(),
+                    accepted: true
                 }
             };
             response.signature = signPayload(response);
@@ -37,7 +37,7 @@ export const reportEvent = async (req, res) => {
 
         const client = await EventService.getClientIntegrity(client_id);
         const endpoint = (await sql`SELECT public_key, integrity_state FROM endpoints WHERE client_id = ${client_id}`)[0];
-        
+
         let holds_integrity = true;
         let forensic_reason = null;
 
@@ -45,7 +45,7 @@ export const reportEvent = async (req, res) => {
         if (endpoint?.public_key) {
             const payloadStr = `${id}${prev_event_hash || ''}${last_valid_hash || ''}${new_hash || ''}`;
             const isSigValid = verifyDeviceSignature(payloadStr, signature, endpoint.public_key);
-            
+
             if (!isSigValid) {
                 console.error(`[Security] Signature verification failed for event ${id} from ${client_id}`);
                 holds_integrity = false;
@@ -73,10 +73,10 @@ export const reportEvent = async (req, res) => {
 
         // 4. Insert separate forensic event if needed
         if (!holds_integrity) {
-             await EventService.failPathAttestation(
-                client_id, 
-                file_path || 'FORENSICS', 
-                forensic_reason === 'CHAIN_BREAK' ? client.last_accepted_event_hash : 'VALID_KEY', 
+            await EventService.failPathAttestation(
+                client_id,
+                file_path || 'FORENSICS',
+                forensic_reason === 'CHAIN_BREAK' ? client.last_accepted_event_hash : 'VALID_KEY',
                 forensic_reason === 'CHAIN_BREAK' ? last_valid_hash : 'INVALID_SIGNATURE',
                 id // Link to the report ID
             );
@@ -108,8 +108,8 @@ export const reportEvent = async (req, res) => {
             status: 'success',
             message: holds_integrity ? 'Event recorded' : 'Event recorded (Forensic Alert generated)',
             event_id: event_id,
-            validation: { 
-                timestamp: new Date().toISOString(), 
+            validation: {
+                timestamp: new Date().toISOString(),
                 accepted: true,
                 forensic_alert: !holds_integrity
             }
@@ -138,7 +138,7 @@ export const acknowledgeEvent = async (req, res) => {
         }
 
         const eventResult = await sql`
-      SELECT event_type, file_path, root_hash, acknowledged 
+      SELECT event_type, payload, acknowledged 
       FROM events 
       WHERE id = ${event_id} AND client_id = ${client_id}
     `;
@@ -165,18 +165,18 @@ export const acknowledgeEvent = async (req, res) => {
       WHERE id = ${event_id}
     `;
 
-        const monitored = await findMonitoredPath(client_id, event.file_path);
+        const monitored = await findMonitoredPath(client_id, event.payload?.file_path);
         if (monitored) {
             await sql`
         UPDATE monitored_paths 
-        SET root_hash = ${event.root_hash}, updated_at = CURRENT_TIMESTAMP
+        SET root_hash = ${event.payload?.root_hash}, updated_at = CURRENT_TIMESTAMP
         WHERE client_id = ${client_id} AND directory_path = ${monitored.directory_path}
       `;
         }
 
         await sql`
       UPDATE endpoints 
-      SET current_root_hash = ${event.root_hash},
+      SET current_root_hash = ${event.payload?.root_hash},
           last_seen = CURRENT_TIMESTAMP,
           integrity_change_count = integrity_change_count + 1
       WHERE client_id = ${client_id}
@@ -264,7 +264,7 @@ export const reviewEvent = async (req, res) => {
 
             // Machine returns to CLEAN if NO unreviewed mismatches remain
             const pendingMismatches = await sql`SELECT count(*)::int as count FROM events WHERE client_id = ${client_id} AND reviewed = false AND event_type = 'mismatch'`;
-            
+
             if (pendingMismatches[0].count === 0) {
                 console.log(`[Integrity] All mismatches reviewed for ${client_id}. Resetting state to CLEAN.`);
                 await sql`UPDATE endpoints SET integrity_state = 'CLEAN' WHERE client_id = ${client_id}`;
