@@ -24,6 +24,7 @@ export const reportEvent = async (req, res) => {
         if (existingEvent) {
             const response = {
                 status: 'success',
+                recorded: true,
                 message: 'Duplicate event acknowledged',
                 event_id: existingEvent.id,
                 validation: {
@@ -152,7 +153,14 @@ export const acknowledgeEvent = async (req, res) => {
         if (event.acknowledged) {
             const response = {
                 status: 'success',
-                message: 'Already acknowledged'
+                recorded: true,
+                message: 'Already acknowledged',
+                event_id: event_id,
+                validation: {
+                    timestamp: new Date().toISOString(),
+                    accepted: true,
+                    already_synced: true
+                }
             };
             response.signature = signPayload(response);
             return res.json(response);
