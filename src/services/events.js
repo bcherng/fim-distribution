@@ -13,6 +13,14 @@ export const EventService = {
         `;
     },
 
+    async getDuplicateEventId(client_event_id, client_id) {
+        const result = await sql`
+            SELECT id FROM events 
+            WHERE client_event_id = ${client_event_id} AND client_id = ${client_id}
+        `;
+        return result[0] || null;
+    },
+
     async insertEvent(data) {
         const result = await sql`
             INSERT INTO events (

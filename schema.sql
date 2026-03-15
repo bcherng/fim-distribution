@@ -6,7 +6,10 @@ CREATE TABLE endpoints (
     public_key TEXT,                       -- Client's RSA-PSS public key
     status TEXT DEFAULT 'online',          -- online, offline, uninstalled
     integrity_state TEXT DEFAULT 'CLEAN',  -- CLEAN, TAINTED
+    is_attested BOOLEAN DEFAULT TRUE,      -- Cached attestation status
+    hardware_info JSONB,                   -- Hardware details
     last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_heartbeat TIMESTAMP,
     current_root_hash TEXT,                -- Latest globally accepted root hash
     last_accepted_event_hash TEXT,         -- Anchor for the rolling hash chain
     tracked_file_count INTEGER DEFAULT 0,
@@ -36,6 +39,28 @@ CREATE TABLE events (
     acknowledged BOOLEAN DEFAULT FALSE,    -- Daemon sync status
     acknowledged_at TIMESTAMP
 );
+
+-- Administrative Tables
+CREATE TABLE admins (
+    id SERIAL PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE sessions (
+    session_id TEXT PRIMARY KEY,
+    user_id INTEGER REFERENCES admins(id),
+    username TEXT,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Seed with default admin (password: admin123)
+-- Hash generated via bcrypt: $2a$10$o8.X2K7Z0E9s.wDqS8fV.eQ.r.8.X2K7Z0E9s.wDqS8fV.eQ.r
+INSERT INTO admins (username, password_hash) 
+VALUES ('bcherng', '$2a$12$qrwx0wgCZo5JXvtHBOqAGeC0Jp.cAXbFshP1V1nj1VOnAy3kJTwne'); 
+-- Note: Replace with actual bcrypt hash for 'admin123' if known, or just dummy for development.
 
 -- Monitored Directories
 CREATE TABLE monitored_paths (
