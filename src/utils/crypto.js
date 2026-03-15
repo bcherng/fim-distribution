@@ -94,8 +94,8 @@ export const signPayload = (payload) => {
         ? JSON.stringify(sortedPayload)
         : String(sortedPayload);
 
-    // console.log('[Crypto] Signing Payload:', data);
-    // console.log('[Crypto] Key Prefix:', privateKey.substring(0, 30));
+    console.log('[Crypto] Signing Payload:', data);
+    console.log('[Crypto] Key Prefix:', privateKey.substring(0, 30));
 
     const sign = crypto.createSign('SHA256');
     sign.update(data);
