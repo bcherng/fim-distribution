@@ -15,7 +15,7 @@ export const EventService = {
 
     async getDuplicateEventId(client_event_id, client_id) {
         const result = await sql`
-            SELECT id FROM events 
+            SELECT id, signature FROM events 
             WHERE client_event_id = ${client_event_id} AND client_id = ${client_id}
         `;
         return result[0] || null;

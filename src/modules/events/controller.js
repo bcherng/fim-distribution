@@ -22,6 +22,17 @@ export const reportEvent = async (req, res) => {
         // 0. Robust Duplicate Check
         const existingEvent = await EventService.getDuplicateEventId(id, client_id);
         if (existingEvent) {
+            if (existingEvent.signature && signature && existingEvent.signature !== signature) {
+                console.error(`[Security] Queue Tampering detected! Duplicate event ID ${id} from ${client_id} has a modified signature.`);
+                await EventService.failPathAttestation(
+                    client_id,
+                    'QUEUE_TAMPERING',
+                    'ORIGINAL_SIGNATURE',
+                    'TAMPERED_SIGNATURE',
+                    id
+                );
+            }
+
             const response = {
                 status: 'success',
                 recorded: true,
