@@ -16,7 +16,18 @@ const app = express();
 const ROOT_DIR = process.cwd();
 
 app.set('trust proxy', 1);
-app.use(helmet());
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "https://js.pusher.com", "'unsafe-inline'"],
+            scriptSrcAttr: ["'unsafe-inline'"],
+            connectSrc: ["'self'", "wss://*.pusher.com", "https://*.pusher.com"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            imgSrc: ["'self'", "data:"]
+        }
+    }
+}));
 app.use(globalLimiter);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
